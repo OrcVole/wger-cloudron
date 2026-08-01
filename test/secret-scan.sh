@@ -119,10 +119,22 @@ else
     "$CRI" run --rm -i --user 0 --entrypoint /bin/bash "$IMAGE" \
       -c "grep -rIn${mode}H --exclude-dir=node_modules --exclude-dir=.git -f - $* 2>/dev/null" < "$pf"
   }
-  CRIT_DIRS="/app /etc /root /home /usr/local /opt"
-  emit anon  "$(img E "$ANON"  $CRIT_DIRS)"
-  emit token "$(img F "$FIXED" $CRIT_DIRS)"
-  shp="$(img E "$SHAPE" $CRIT_DIRS)"
+  # Two scopes, deliberately different. The /home/wger tree is copied unmodified from the
+  # digest-pinned, publicly published upstream image, and the Dockerfile writes nowhere under
+  # it, so by construction it cannot carry this packager's identities, box specifics or
+  # secrets; it DOES legitimately contain public look-alikes for both pattern families
+  # (gevent/tornado test-suite TLS keys, botocore's AWS documentation examples, PEM marker
+  # strings in cryptography source for the shapes; coincidental prose such as Unicode emoji
+  # names in wcwidth colliding with identity patterns for the denylist). The pattern-based
+  # families (identity/box and credential shapes) therefore scan only the paths this package
+  # writes: /app, /etc, /root, /usr/local, /opt, /home/cloudron. Exact token VALUES are
+  # random strings with no false-positive risk, so they stay scanned everywhere including
+  # /home/wger, as belt and braces.
+  ALL_DIRS="/app /etc /root /home /usr/local /opt"
+  WRITTEN_DIRS="/app /etc /root /usr/local /opt /home/cloudron"
+  emit anon  "$(img E "$ANON"  $WRITTEN_DIRS)"
+  emit token "$(img F "$FIXED" $ALL_DIRS)"
+  shp="$(img E "$SHAPE" $WRITTEN_DIRS)"
 
   # --- the inert /etc/ssh host keys: whitelist BY EXACT PATH, with a VISIBLE COUNT ---
   # cloudron/base ships three inert SSH host keys. No sshd runs in the app and the Dockerfile never
