@@ -1,0 +1,17 @@
+.git
+.gitignore
+docs
+test
+README.md
+AGENTS.md
+RECON.md
+screenshots
+CloudronVersions.json
+.anonymize-list
+phase-notes
+.claude
+RETROSPECTIVE.md
+.env
+*.key
+credentials*
+*foundation*.md

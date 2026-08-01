@@ -1,0 +1,8 @@
+phase-notes/
+*foundation*.md
+.anonymize-list
+.env
+*.key
+credentials*
+RETROSPECTIVE.md
+.claude/
