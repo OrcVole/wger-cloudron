@@ -21,10 +21,19 @@ orphans stored data, but both are disruptive, so the seed-once rule applies in f
   the format always matches what the application expects, stored as two files, exported into
   the environment at every boot, never logged.
 - Administrator password: first run executes upstream's `wger bootstrap --no-process-static`
-  against the empty database (migrations, fixtures, and the fixture admin account), then in
-  the same start.sh pass, before any listener exists, replaces the fixture password with a
-  random one and writes it to `/app/data/.secrets/admin-password`. The insecure value is never
-  reachable over the network. The file is the operator's read-once artefact, surfaced in the
+  against the empty database (migrations, fixtures, and the fixture admin account), then
+  replaces the fixture password with a random one and writes it to
+  `/app/data/.secrets/admin-password`, before the application server is started. Amended
+  2026-08-01 at implementation review: the original wording said "before any listener exists",
+  but the immediate-health shim requires nginx to bind within seconds of container start,
+  ahead of first-run bootstrap (measured at roughly 17 seconds against a fresh database). The
+  guarantee that matters survives intact in a weaker premise: nginx listens, but gunicorn is
+  held down (supervisor `autostart=false`) until the bootstrap one-shot has already reset the
+  password, so no request can reach a login surface while the fixture password exists; nginx
+  returns 502 for everything except the health path during that window. The insecure value is
+  therefore still never reachable over the network. A failed bootstrap shuts supervisord down
+  (fail loud) rather than leaving nginx answering a green health check in front of a dead
+  application. The file is the operator's read-once artefact, surfaced in the
   post-install message; changing the password in the application does not update the file, and
   the file is never re-written on later boots.
 - First-run detection asks the database itself (a user count that treats a missing table as
