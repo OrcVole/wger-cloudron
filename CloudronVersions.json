@@ -44,11 +44,10 @@
         ],
         "mediaLinks": [
           "https://raw.githubusercontent.com/OrcVole/wger-cloudron/main/screenshots/wger-features.png"
-        ],
-        "packageUrl": "https://github.com/OrcVole/wger-cloudron"
+        ]
       },
-      "creationDate": "2026-08-01T20:10:46.000Z",
-      "ts": 1785615046537,
+      "creationDate": "2026-08-01T20:42:20.000Z",
+      "ts": 1785616940470,
       "publishState": "published"
     }
   }
