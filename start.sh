@@ -111,6 +111,14 @@ log "wger Cloudron package starting"
 mkdir -p /app/data
 chown -R cloudron:cloudron /app/data
 
+# Runtime HOME for this script and, through the supervisord exec below, for every program it
+# runs. supervisord does NOT reset HOME when dropping a program to user=cloudron, so without
+# this every child inherits root's HOME=/root; the `wger` CLI is invoke-based, invoke opens
+# $HOME/.invoke.yaml at startup, and as uid cloudron that open fails EACCES and kills first-run
+# bootstrap (observed live 2026-08-01). /app/data is the doctrine home for runtime HOME: it
+# exists, it is owned by cloudron, and stray dotfiles land somewhere harmless and backed up.
+export HOME=/app/data
+
 mkdir -p "${SECRETS_DIR}"
 chmod 0700 "${SECRETS_DIR}"
 chown cloudron:cloudron "${SECRETS_DIR}"

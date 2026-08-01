@@ -153,14 +153,17 @@ else
     fail "/healthcheck did NOT return 200 within 5s of container start"
 fi
 
-# --- assertion 2: login page eventually returns 200 with wger content ---------------------
+# --- assertion 2: anonymous landing page eventually returns 200 with wger content ---------
 #
 # This can take a while on first boot: bootstrap.sh waits for postgres/redis, runs migrations
 # across every wger app, loads fixtures, then starts gunicorn. Generous bound: 180s.
+# wger answers / anonymously with a REDIRECT chain, not a bare 200 (observed live 2026-08-01:
+# 302 / -> /en/ -> 200 on the public features page; recon recorded the same "2xx/3xx
+# anonymously"), so follow redirects (-L) and assert on the FINAL response.
 login_body="$(mktemp "${DATA_DIR}.login.XXXXXX" 2>/dev/null || mktemp)"
 login_ok=0
 for _ in $(seq 1 90); do
-    status="$(curl -s -o "${login_body}" -m 5 -w '%{http_code}' "${BASE_URL}/" 2>/dev/null || echo 000)"
+    status="$(curl -sL -o "${login_body}" -m 10 -w '%{http_code}' "${BASE_URL}/" 2>/dev/null || echo 000)"
     if [[ "${status}" == "200" ]] && grep -qi 'wger' "${login_body}" 2>/dev/null; then
         login_ok=1
         break
@@ -168,9 +171,9 @@ for _ in $(seq 1 90); do
     sleep 2
 done
 if [[ "${login_ok}" == "1" ]]; then
-    pass "login page (/) eventually returned 200 with wger content"
+    pass "anonymous landing page (/ with redirects followed) eventually returned 200 with wger content"
 else
-    fail "login page (/) never returned 200 with wger content within 180s"
+    fail "anonymous landing page (/ with redirects followed) never returned 200 with wger content within 180s"
 fi
 
 # --- assertion 3: a static asset the app actually references returns 200 ------------------
@@ -213,10 +216,18 @@ fi
 uid_report="$("${CRI}" exec "${APP_NAME}" sh -c '
 bad=0
 nonroot=0
+self=$$
 for d in /proc/[0-9]*; do
     [ -r "$d/status" ] || continue
     pid="${d#/proc/}"
     [ "$pid" = "1" ] && continue
+    # Exclude this checker itself and its own transient children: podman exec enters the
+    # container as the image default user (root, since start.sh must run as root), so without
+    # this the assertion detects its own shell as a rogue root process (observed live
+    # 2026-08-01: "ROOT:sh:<pid>" was this sh).
+    [ "$pid" = "$self" ] && continue
+    ppid="$(awk "/^PPid:/{print \$2; exit}" "$d/status" 2>/dev/null)"
+    [ "$ppid" = "$self" ] && continue
     comm="$(cat "$d/comm" 2>/dev/null)"
     [ "$comm" = "supervisord" ] && continue
     uid="$(awk "/^Uid:/{print \$2; exit}" "$d/status" 2>/dev/null)"

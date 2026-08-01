@@ -95,23 +95,38 @@ s.close()
     fatal "${name} at ${host}:${port} did not become reachable after 60s"
 }
 
-# Mirrors wger/tasks.py's own database_exists(): count auth_user rows, treat ANY DatabaseError
-# (missing table on a genuinely fresh database, chief among them) as "empty". Verified against
-# the pinned image's source on 2026-08-01; replicated rather than reused because it is reached
-# through the `wger` invoke CLI's bootstrap task, not exposed as its own manage.py command.
+# Based on wger/tasks.py's own database_exists() (verified against the pinned image's source on
+# 2026-08-01; replicated rather than reused because it is reached through the `wger` invoke
+# CLI's bootstrap task, not exposed as its own manage.py command), with two deliberate
+# hardenings, both bought by a live smoke failure on 2026-08-01:
+#
+#   1. The verdict is a sentinel LINE extracted from the output, never a comparison of the
+#      whole captured blob: Django's app-ready logging writes INFO noise to stdout (django-axes
+#      prints an "AXES: BEGIN" banner), and that noise rode along in the command substitution,
+#      made the blob != "EMPTY", and silently skipped first-run bootstrap on a genuinely fresh
+#      database (observed live: fresh sidecar, "database already has data", then migrations
+#      applying 0001_initial from scratch, then a fixtureless site answering 500).
+#   2. A reachable schema with ZERO users also counts as empty, which is STRONGER than
+#      upstream's table-existence test: a first run interrupted between migrate and the
+#      fixtures (a real possibility when the platform restarts a container during a slow first
+#      install) leaves tables but no users, and under upstream semantics that state would skip
+#      bootstrap forever. Zero users provably means zero user-owned data, so re-running the
+#      fixture bootstrap there is safe and self-healing.
 database_is_empty() {
-    local out
+    local out state
     out="$(manage shell -c '
 from django.contrib.auth.models import User
 from django.db import DatabaseError
 try:
-    User.objects.count()
+    n = User.objects.count()
 except DatabaseError:
-    print("EMPTY")
+    print("WGER_DB_STATE=EMPTY")
 else:
-    print("NOT_EMPTY")
+    print("WGER_DB_STATE=EMPTY" if n == 0 else "WGER_DB_STATE=HAS_DATA")
 ' 2>/dev/null)" || fatal "could not probe database emptiness"
-    [[ "${out}" == "EMPTY" ]]
+    state="$(printf '%s\n' "${out}" | sed -n 's/^WGER_DB_STATE=//p' | tail -1)"
+    [[ -n "${state}" ]] || fatal "database emptiness probe produced no verdict"
+    [[ "${state}" == "EMPTY" ]]
 }
 
 # First-run only: upstream's own bootstrap reached outside an empty database would call
@@ -122,6 +137,8 @@ seed_admin_password() {
     local admin_pw_file="${SECRETS_DIR}/admin-password"
     log "setting a random admin password (replacing upstream's fixture default)"
     local admin_pw
+    # Sentinel-prefixed extraction, same reason as database_is_empty(): Django log noise on
+    # stdout would otherwise be captured INTO the password file alongside the real value.
     admin_pw="$(manage shell -c '
 import secrets
 from django.contrib.auth.models import User
@@ -129,8 +146,8 @@ pw = secrets.token_urlsafe(24)
 u = User.objects.get(username="admin")
 u.set_password(pw)
 u.save()
-print(pw)
-' 2>/dev/null)" || fatal "could not set the admin password after bootstrap"
+print("WGER_ADMIN_PW=" + pw)
+' 2>/dev/null | sed -n 's/^WGER_ADMIN_PW=//p' | tail -1)" || fatal "could not set the admin password after bootstrap"
     if [[ -z "${admin_pw}" ]]; then
         fatal "admin password generation produced no output"
     fi
