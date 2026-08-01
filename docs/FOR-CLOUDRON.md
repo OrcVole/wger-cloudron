@@ -23,6 +23,19 @@ reinstall. Either retaining the uploaded source while an app is in an error stat
 `repair` accept a source directory the way `update` does, would make failed installs
 recoverable in place.
 
+## Trailing-dot hosts: the proxy normalises Host but only the proxy could canonicalise
+
+A browser session on the absolute-FQDN form of an app domain (`https://app.example.com.`,
+trailing dot) breaks any cookie-dependent flow in Chromium-family browsers, which refuse to
+store cookies for trailing-dot hosts; in a Django app this surfaces as a CSRF 403 on the
+first POST (the Origin header keeps the dot while the Host header arrives normalised). The
+platform's front proxy strips the trailing dot from Host before the app sees it, which means
+the app CANNOT detect and canonical-redirect the dotted navigation itself (an in-container
+nginx rule fires only for direct requests, verified live). The proxy is the one component
+that still sees the dotted authority, so a 301 to the canonical host at the proxy would
+spare every packaged app the failure mode. Low priority, but the failure is confusing when a
+user lands on a dotted URL.
+
 ## Install-time dependency on `ipv6.api.cloudron.io`
 
 The DNS propagation step of an install failed outright with "Unable to detect ipv6. API
