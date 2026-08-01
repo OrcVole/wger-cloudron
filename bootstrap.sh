@@ -184,6 +184,43 @@ else:
     unset out
 }
 
+# Cloudron SSO (experiment E4): reconcile the allauth SocialApp row for the oidc addon on
+# EVERY boot. Addon present: create or update the row from CLOUDRON_OIDC_* (values can change
+# across restarts, golden rule for addon env). Addon absent: delete any previously seeded row,
+# so a stale login button never points at a dead issuer. allauth.socialaccount is always in
+# INSTALLED_APPS in wger's settings (only the per-provider apps are env-gated), so the model
+# is importable in both branches. The callback URL follows allauth's provider-id pattern:
+# /accounts/oidc/<provider_id>/login/callback/ with provider_id "cloudron"; the live
+# redirect_uri is verified against the manifest loginRedirectUri on the rig before any SSO
+# claim ships (doctrine gotcha #48).
+reconcile_oidc_socialapp() {
+    local out
+    out="$(manage shell -c '
+import os
+from allauth.socialaccount.models import SocialApp
+from django.contrib.sites.models import Site
+
+issuer = os.environ.get("CLOUDRON_OIDC_ISSUER", "")
+if issuer:
+    app, created = SocialApp.objects.update_or_create(
+        provider="openid_connect",
+        provider_id="cloudron",
+        defaults={
+            "name": os.environ.get("CLOUDRON_OIDC_PROVIDER_NAME", "Cloudron"),
+            "client_id": os.environ["CLOUDRON_OIDC_CLIENT_ID"],
+            "secret": os.environ["CLOUDRON_OIDC_CLIENT_SECRET"],
+            "settings": {"server_url": issuer},
+        },
+    )
+    app.sites.set(Site.objects.all())
+    print("WGER_OIDC=SEEDED_CREATED" if created else "WGER_OIDC=SEEDED_UPDATED")
+else:
+    n, _ = SocialApp.objects.filter(provider="openid_connect", provider_id="cloudron").delete()
+    print("WGER_OIDC=REMOVED" if n else "WGER_OIDC=ABSENT")
+' 2>/dev/null | sed -n 's/^WGER_OIDC=//p' | tail -1)" || fatal "could not reconcile the Cloudron OIDC SocialApp"
+    log "Cloudron OIDC SocialApp state: ${out:-unknown}"
+}
+
 # --- main ------------------------------------------------------------------------------------
 
 log "starting (nginx is already up and answering /healthcheck; gunicorn/celery are not started yet)"
@@ -240,6 +277,8 @@ ensure_admin_password
 
 log "setting the site URL from SITE_URL"
 manage set-site-url
+
+reconcile_oidc_socialapp
 
 log "starting gunicorn, celery-worker and celery-beat"
 supervisorctl -c "${SUPERVISOR_CONF}" start gunicorn celery-worker celery-beat

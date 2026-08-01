@@ -218,6 +218,16 @@ export FROM_EMAIL="${CLOUDRON_MAIL_FROM}"
 export DOWNLOAD_INGREDIENTS_FROM="WGER"
 export DJANGO_DEBUG="False"
 
+# Cloudron SSO (experiment E4): when the oidc addon is present, its CLOUDRON_OIDC_* values
+# are in the environment; enable allauth's generic openid_connect provider then. Forced after
+# the operator override sourcing like the rest of the infrastructure block. The SocialApp row
+# carrying the actual issuer/client configuration is reconciled by bootstrap.sh once the
+# database is migrated. With the addon absent the variable stays unset and the provider app is
+# simply not loaded.
+if [[ -n "${CLOUDRON_OIDC_ISSUER:-}" ]]; then
+    export WGER_SOCIAL_PROVIDERS="openid_connect"
+fi
+
 export GUNICORN_WORKERS="$(compute_gunicorn_workers)"
 log "gunicorn workers computed from cgroup CPU quota: ${GUNICORN_WORKERS}"
 
