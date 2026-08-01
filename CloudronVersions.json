@@ -1,0 +1,55 @@
+{
+  "stable": true,
+  "versions": {
+    "1.0.0": {
+      "manifest": {
+        "id": "io.github.orcvole.wger",
+        "title": "wger",
+        "author": "OrcVole",
+        "packagerName": "OrcVole",
+        "packagerUrl": "https://github.com/OrcVole/wger-cloudron",
+        "contactEmail": "Most+github@OrcadianVole.com",
+        "version": "1.0.0",
+        "upstreamVersion": "2.6",
+        "manifestVersion": 2,
+        "minBoxVersion": "9.1.0",
+        "website": "https://wger.de",
+        "dockerImage": "ghcr.io/orcvole/wger-cloudron@sha256:f8f79ef55d200e7b2ff561523bc4ebfb9f04d62495df07364d2338eec1d42a19",
+        "tagline": "Workout, fitness and nutrition manager",
+        "description": "# wger\n\nwger (pronounced \"\u02c8v\u025b\u0261\u0250\") is a free, open source workout, fitness and nutrition manager. It\ncovers the whole training loop: build routines, log workouts, track body weight and\nmeasurements, and plan meals against a searchable ingredient and nutrition database that\nincludes barcode scanning. A gym management mode lets a trainer administer members, assign\nroutines and record progress on their behalf.\n\nA REST API ships alongside the web application and is the same API used by the official wger\nmobile apps (Android and iOS), so the app installed from this package can be used from a phone\nas well as a browser.\n\nThis package runs wger's own gunicorn application server together with its Celery worker and\nbeat scheduler under supervisor, fronted by nginx. It uses the Cloudron PostgreSQL and Redis\naddons for its database and cache/queue, and the Cloudron email addon to relay outgoing mail\n(password resets, notifications). Uploaded media (exercise images, custom photos) is stored in\nthe app's persistent data directory, not in the container image.\n\nwger's exercise database can synchronise weekly from the public wger.de instance to pick up new\nexercises, images and translations; this is on by default and configurable. Ingredient\nsynchronisation against wger.de is off by default, because the ingredient dataset is large and\ngrows the database considerably; it can be turned on if wanted.\n\nNot included in this package version: PowerSync, the component upstream uses for offline\nsynchronisation in the mobile apps. Online use of the web application and the mobile apps is\nexpected to work fully; offline mobile sync is the one feature this package does not provide.",
+        "changelog": "- Initial package, wrapping wger 2.6.\n- Cloudron single sign-on through the oidc addon: the login page offers sign-in with the\n  Cloudron's own name, and accounts are provisioned automatically on first sign-in.\n  Optional; installs without user management use local accounts only.\n- Addons used: PostgreSQL, Redis, sendmail, localstorage, oidc.\n- Processes: gunicorn, Celery worker, Celery beat and nginx under supervisor.\n- Upstream default credentials and secrets (admin password, SECRET_KEY, JWT keypair)\n  neutralised by the package entrypoint on first run.\n- PowerSync (mobile offline sync) is not included in this package version.",
+        "icon": "file://logo.png",
+        "iconUrl": "https://raw.githubusercontent.com/OrcVole/wger-cloudron/main/logo.png",
+        "postInstallMessage": "<sso>\n\n## Single sign-on\n\nThis app is connected to Cloudron user management. Anyone granted access to the app can use\nthe \"Sign in with ...\" button on the login page (it carries this Cloudron's configured name);\na wger account is created automatically on first sign-in. The administrator account below is\napp-local and continues to work alongside single sign-on.\n\n</sso>\n\n## First login\n\nThe initial administrator account is:\n\n- Username: `admin`\n- Password: randomly generated at first start and written to\n  `/app/data/.secrets/admin-password`\n\nRead the password using the Cloudron file manager, or open the web terminal for this app and\nrun:\n\n```\ncat /app/data/.secrets/admin-password\n```\n\nChange the administrator password after first login.\n\n## Registration\n\nSelf-registration of new accounts is disabled by default. To enable it, add an override to the\nenvironment file at `/app/data/env` (see the package README for the full list of supported\noverrides), then restart the app.\n\n## Support\n\nThis package is not affiliated with the wger project. Report packaging issues at the package's\nGitHub repository, and upstream application issues at the wger project itself.",
+        "httpPort": 8000,
+        "healthCheckPath": "/healthcheck",
+        "configurePath": "/",
+        "memoryLimit": 2147483648,
+        "addons": {
+          "localstorage": {},
+          "postgresql": {},
+          "redis": {},
+          "sendmail": {},
+          "oidc": {
+            "loginRedirectUri": "/account/oidc/cloudron/login/callback/"
+          }
+        },
+        "optionalSso": true,
+        "tags": [
+          "fitness",
+          "workout",
+          "nutrition",
+          "health",
+          "gym"
+        ],
+        "mediaLinks": [
+          "https://raw.githubusercontent.com/OrcVole/wger-cloudron/main/screenshots/wger-features.png"
+        ],
+        "packageUrl": "https://github.com/OrcVole/wger-cloudron"
+      },
+      "creationDate": "2026-08-01T20:10:46.000Z",
+      "ts": 1785615046537,
+      "publishState": "published"
+    }
+  }
+}
