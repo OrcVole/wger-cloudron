@@ -189,10 +189,11 @@ else:
 # across restarts, golden rule for addon env). Addon absent: delete any previously seeded row,
 # so a stale login button never points at a dead issuer. allauth.socialaccount is always in
 # INSTALLED_APPS in wger's settings (only the per-provider apps are env-gated), so the model
-# is importable in both branches. The callback URL follows allauth's provider-id pattern:
-# /accounts/oidc/<provider_id>/login/callback/ with provider_id "cloudron"; the live
-# redirect_uri is verified against the manifest loginRedirectUri on the rig before any SSO
-# claim ships (doctrine gotcha #48).
+# is importable in both branches. The callback URL follows allauth's provider-id pattern
+# under wger's SINGULAR mount point: /account/oidc/<provider_id>/login/callback/ with
+# provider_id "cloudron" (verified live on the rig 2026-08-01: allauth sent exactly
+# redirect_uri=https://<app>/account/oidc/cloudron/login/callback/; doctrine gotcha #48's
+# warning about guessing this path was earned, the plural /accounts/ guess was wrong).
 reconcile_oidc_socialapp() {
     local out
     out="$(manage shell -c '
