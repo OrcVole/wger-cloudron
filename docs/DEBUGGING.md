@@ -33,3 +33,20 @@ hash and log-branch checks.
 Timings for the record: container start to backend serving 7 m 51 s on first run (migrations
 with the faked core.0023 plus atomic fixtures, all behind the immediate-health shim); 2 m 03 s
 on the restart boot (no-op migrate).
+
+### Gate 1: auth and SSO end to end (PASS, 2026-08-01)
+
+Recipe: with SSO active, probe the named public paths and protected paths without a session
+from outside the rig; log in as the local admin through the form (CSRF cookie plus token) to
+prove optionalSso coexistence; have a real Cloudron user complete the browser sign-in; then
+read the observed callback request line from the access log and the user plus social-account
+rows from the application database (docker exec with the app's own database environment).
+
+| Invariant | Proof | Verdict |
+|---|---|---|
+| sign-in | Real Cloudron user authenticated in a browser, operator-confirmed | PASS |
+| callback | Observed GET /account/oidc/cloudron/login/callback/ with status 302, exactly the predicted path | PASS |
+| account | USER row present for the Cloudron identity; SocialAccount row user_id=2 provider=cloudron linked to it | PASS |
+| public paths | api root 200 application/json, exercise data 200, healthcheck 200, static asset 200, all without a session while SSO is active | PASS |
+| protected paths | dashboard 302 to /user/login?next=/en/dashboard; unauthenticated API write 403 | PASS |
+| architecture | local admin form login 302 to the home page and dashboard 200 with that session (optionalSso holds); no proxyAuth anywhere | PASS |
