@@ -31,7 +31,6 @@ set -euo pipefail
 log() { printf '==> [bootstrap] %s\n' "$*"; }
 
 MANAGE="/home/wger/src/manage.py"
-WGER_BIN="/home/wger/.local/bin/wger"
 SECRETS_DIR="/app/data/.secrets"
 SUPERVISOR_CONF="/app/code/supervisor/supervisord.conf"
 
@@ -129,32 +128,60 @@ else:
     [[ "${state}" == "EMPTY" ]]
 }
 
-# First-run only: upstream's own bootstrap reached outside an empty database would call
-# create_or_reset_admin and reset an existing admin's password to the fixture default
-# ('adminadmin'). This package never calls that path except through `wger bootstrap`, which is
-# itself gated on database_is_empty below, so it only ever runs once.
-seed_admin_password() {
+# Admin password handling, STATE-driven rather than first-run-flag-driven: the fixture set
+# (users.json) creates exactly one user, admin, with the known default password 'adminadmin'.
+# Whatever boot this is, if the admin user currently carries that default it is replaced with
+# a random password before gunicorn ever starts. That heals every interruption window (killed
+# between fixtures and reset, killed mid-reset) without ever touching a password the operator
+# has since changed, and it never resets anything on a restored or long-running install.
+# Sentinel-prefixed extraction throughout, same reason as database_is_empty(): Django log
+# noise on stdout would otherwise be captured into the values.
+ensure_admin_password() {
     local admin_pw_file="${SECRETS_DIR}/admin-password"
-    log "setting a random admin password (replacing upstream's fixture default)"
-    local admin_pw
-    # Sentinel-prefixed extraction, same reason as database_is_empty(): Django log noise on
-    # stdout would otherwise be captured INTO the password file alongside the real value.
-    admin_pw="$(manage shell -c '
+    local out verdict
+    out="$(manage shell -c '
 import secrets
 from django.contrib.auth.models import User
-pw = secrets.token_urlsafe(24)
-u = User.objects.get(username="admin")
-u.set_password(pw)
-u.save()
-print("WGER_ADMIN_PW=" + pw)
-' 2>/dev/null | sed -n 's/^WGER_ADMIN_PW=//p' | tail -1)" || fatal "could not set the admin password after bootstrap"
-    if [[ -z "${admin_pw}" ]]; then
-        fatal "admin password generation produced no output"
-    fi
-    ( umask 077; printf '%s' "${admin_pw}" > "${admin_pw_file}" )
-    chmod 0600 "${admin_pw_file}"
-    unset admin_pw
-    log "admin password written to ${admin_pw_file} (0600, value never logged)"
+try:
+    u = User.objects.get(username="admin")
+except User.DoesNotExist:
+    print("WGER_ADMIN=ABSENT")
+else:
+    if u.check_password("adminadmin"):
+        pw = secrets.token_urlsafe(24)
+        u.set_password(pw)
+        u.save()
+        print("WGER_ADMIN_PW=" + pw)
+        print("WGER_ADMIN=RESET")
+    else:
+        print("WGER_ADMIN=PRESENT_CUSTOM")
+' 2>/dev/null)" || fatal "could not inspect the admin user"
+    verdict="$(printf '%s\n' "${out}" | sed -n 's/^WGER_ADMIN=//p' | tail -1)"
+    case "${verdict}" in
+    RESET)
+        local admin_pw
+        admin_pw="$(printf '%s\n' "${out}" | sed -n 's/^WGER_ADMIN_PW=//p' | tail -1)"
+        [[ -n "${admin_pw}" ]] || fatal "admin password reset produced no value"
+        ( umask 077; printf '%s' "${admin_pw}" > "${admin_pw_file}" )
+        chmod 0600 "${admin_pw_file}"
+        log "admin password was the fixture default; replaced with a random one, written to ${admin_pw_file} (0600, value never logged)"
+        ;;
+    PRESENT_CUSTOM)
+        if [[ ! -s "${admin_pw_file}" ]]; then
+            log "note: admin password is operator-managed and ${admin_pw_file} is absent; leaving it untouched"
+        fi
+        ;;
+    ABSENT)
+        if [[ "${FIRST_RUN}" == "1" ]]; then
+            fatal "admin user missing immediately after first-run fixtures"
+        fi
+        log "note: no admin user exists (operator-managed?); nothing to do"
+        ;;
+    *)
+        fatal "admin probe produced no verdict"
+        ;;
+    esac
+    unset out
 }
 
 # --- main ------------------------------------------------------------------------------------
@@ -165,16 +192,51 @@ wait_for_tcp postgresql "${DJANGO_DB_HOST}" "${DJANGO_DB_PORT}"
 wait_for_tcp redis "${CLOUDRON_REDIS_HOST}" "${CLOUDRON_REDIS_PORT}"
 
 log "probing database emptiness"
+FIRST_RUN=0
 if database_is_empty; then
-    log "database is empty: running first-run bootstrap (wger bootstrap --no-process-static)"
-    run_interruptible "${WGER_BIN}" bootstrap --no-process-static
-    seed_admin_password
+    FIRST_RUN=1
+    log "database is empty (no tables, or tables with zero users): first-run fixtures will be loaded"
 else
-    log "database already has data: skipping first-run bootstrap"
+    log "database already has data: first-run fixtures will be skipped"
 fi
+
+# The first-run work is deliberately NOT delegated to upstream's `wger bootstrap` any more:
+# that task gates itself on table-existence, so in the migrated-but-unfixtured state a real
+# interrupted install leaves behind (observed live on the rig, 2026-08-01) it returns success
+# in seconds having done nothing, and the install wedges. The equivalent steps run here
+# explicitly (same commands, same fixture list and order as wger/tasks.py bootstrap), each one
+# idempotent, so any interruption at any point heals on the next boot.
+#
+# core.0023_create_publication runs CREATE PUBLICATION powersync FOR ALL TABLES, which
+# PostgreSQL allows only to superusers; the Cloudron postgresql addon user is not one, and the
+# migration killed the first install (psycopg.errors.InsufficientPrivilege, observed live
+# 2026-08-01). PowerSync is not part of this package (mobile offline sync is documented as
+# unavailable), so that one migration is FAKED: core is migrated for real up to 0022, 0023 is
+# then recorded as applied without running, and the full migrate afterwards continues normally
+# (core.0024 and later run for real). All three commands are idempotent no-ops once applied.
+# Revisit at every upstream version bump: a new superuser-requiring migration would fail the
+# update loudly, which is the intended fail-loud behaviour.
+log "applying core migrations to 0022, then faking the PowerSync publication migration (core.0023)"
+run_interruptible python3 "${MANAGE}" migrate --noinput core 0022
+run_interruptible python3 "${MANAGE}" migrate --noinput --fake core 0023
 
 log "running database migrations"
 run_interruptible python3 "${MANAGE}" migrate --noinput
+
+if [[ "${FIRST_RUN}" == "1" ]]; then
+    # Upstream loads these one loaddata call each; a single call keeps the exact list and
+    # order but makes the whole fixture load ONE transaction, so an interruption rolls back
+    # cleanly to "zero users" and the next boot simply retries first run. Upstream loads
+    # gym.json twice (its list, verbatim); once suffices in a single atomic call.
+    log "loading initial fixtures (single atomic loaddata, upstream bootstrap's list and order)"
+    run_interruptible python3 "${MANAGE}" loaddata \
+        gym.json languages.json groups.json users.json licenses.json \
+        setting_repetition_units.json setting_weight_units.json gym_config.json \
+        equipment.json muscles.json categories.json exercise-base-data.json \
+        translations.json gym-config.json gym-adminconfig.json
+fi
+
+ensure_admin_password
 
 log "setting the site URL from SITE_URL"
 manage set-site-url
