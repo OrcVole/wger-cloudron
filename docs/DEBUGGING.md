@@ -99,3 +99,34 @@ The application keeps no bundled database with background file churn (PostgreSQL
 addon; /app/data holds only media, secrets and the operator env file), so no
 backupCommand/restoreCommand quiescing is required; nothing in the backup or restore task
 logs suggested syncer trouble.
+
+### Gate 4: memory, idle versus production (PASS, 2026-08-01)
+
+The application has no memory-mapped store in the container (anon 424 MiB versus file 32 KiB
+at idle; PostgreSQL is the addon), so memory.peak is the verdict counter. Counters read from
+the container's cgroup v2 tree on the host (this host keeps Docker cgroups under
+/sys/fs/cgroup/docker/<id>, found via the container init process's /proc cgroup entry;
+memory.peak reset was refused, so the peak covers the container boot, which is the honest
+figure anyway).
+
+Load recipe (reproducible): three concurrent workers for 300 s through the public front door
+with real credentials: (1) JWT weight-entry writes plus list reads (108 POSTs; wger enforces
+one entry per user and date, so 28 distinct dates created exactly 28 rows and the rest were
+correctly rejected); (2) 61 gallery image uploads (multipart PNG) plus gallery page fetches
+forcing thumbnail generation, plus API list reads; (3) anonymous browsing of the landing
+chain, exercise and muscle API endpoints and the authenticated dashboard. 60 s drain before
+the loaded sample. Host load average 11 to 15 throughout (recorded per the honest-timing
+rule).
+
+| Invariant | Idle | Loaded (post-drain) |
+|---|---|---|
+| memory.current / memory.peak | 436 MiB / 513 MiB (peak includes container boot) | 618 MiB / 619 MiB |
+| oom_kill | 0 | 0 |
+| swap.current | 0 | 0 |
+| per-process RSS | celery 149+144 MB (worker plus beat), gunicorn 123+115+99+99 MB (master plus three workers), supervisord 28 MB, nginx under 20 MB | celery unchanged (thumbnails render in gunicorn), gunicorn workers grown to 123 to 138 MB |
+| load landed | n/a | gallery_image 1 to 62 (61 sent), weight_weightentry 1 to 29 (28 unique dates), health 200 throughout |
+| verdict | | PASS: peak 619 MiB is 30 percent of the 2 GiB memoryLimit against an 80 percent threshold; constructed worst case (three gunicorn workers grown to 200 MB plus master, celery worker at 500 MB during the weekly media sync, beat 150 MB, nginx and supervisord 50 MB, 100 MB transient upload tmpfs) is roughly 1.54 GiB, clearing 2 GiB with about 500 MB of margin. memoryLimit 2147483648 ships unchanged. |
+
+A lower-footprint configuration (fewer gunicorn workers via GUNICORN_EXTRA_ARGS, lower
+CELERY_WORKER_CONCURRENCY in /app/data/env) is available to constrained installations as an
+operator knob; the shipped default preserves full capability with margin.
