@@ -39,8 +39,8 @@ COPY --from=upstream /home/wger/src /home/wger/src
 # start.sh re-exports all three on every boot too, per the phase-3 spec's env mapping table,
 # which is intentionally redundant with these Dockerfile ENV values, not a substitute for them).
 ENV PYTHONUSERBASE=/home/wger/.local \
-    PYTHONPATH=/home/wger/src \
-    DJANGO_SETTINGS_MODULE=settings.main \
+    PYTHONPATH=/app/code/pysettings:/home/wger/src \
+    DJANGO_SETTINGS_MODULE=cloudron_settings \
     PATH=/home/wger/.local/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -49,6 +49,12 @@ ENV PYTHONUSERBASE=/home/wger/.local \
     LC_ALL=en_US.UTF-8
 
 RUN mkdir -p /app/code
+
+# The package's settings shim: imports upstream settings.main unchanged and overrides only
+# SOCIALACCOUNT_ADAPTER (Cloudron SSO signup; see pysettings/cloudron_settings.py). Copied
+# before the build gates so `manage.py check` and collectstatic validate the settings
+# identity that actually ships, not a different one.
+COPY pysettings/ /app/code/pysettings/
 
 # --- Build gates (docs/decisions/0001-build-shape.md): fail the BUILD, not the first boot, if
 # the copied tree does not import or does not pass Django's own system checks. Also bakes
@@ -72,6 +78,7 @@ RUN set -eux; \
     cd /home/wger/src; \
     python3 -c "import django, wger"; \
     python3 manage.py check; \
+    python3 manage.py shell -c "from allauth.socialaccount.adapter import get_adapter; a = get_adapter(); assert type(a).__name__ == 'CloudronSocialAccountAdapter', type(a).__name__; print('social adapter gate OK')"; \
     python3 manage.py collectstatic --noinput; \
     file_count="$(find /app/code/static -type f | wc -l)"; \
     echo "==> collectstatic produced ${file_count} files"; \

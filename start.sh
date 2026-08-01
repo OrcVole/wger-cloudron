@@ -173,8 +173,8 @@ fi
 log "forcing package infrastructure environment (always wins over operator overrides)"
 
 export PYTHONUSERBASE=/home/wger/.local
-export PYTHONPATH=/home/wger/src
-export DJANGO_SETTINGS_MODULE=settings.main
+export PYTHONPATH=/app/code/pysettings:/home/wger/src
+export DJANGO_SETTINGS_MODULE=cloudron_settings
 
 export DJANGO_DB_ENGINE="django.db.backends.postgresql"
 export DJANGO_DB_DATABASE="${CLOUDRON_POSTGRESQL_DATABASE}"
