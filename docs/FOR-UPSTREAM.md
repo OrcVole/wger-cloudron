@@ -29,6 +29,17 @@ and admin creation entirely and returns success. Anything that wraps the entrypo
 forever with no admin account. A `User.objects.count() == 0` check alongside the
 DatabaseError branch would make bootstrap resumable after an interrupted first run.
 
+## A toggle to hide the app-store badges would serve privacy-minded self-hosters
+
+The base template's footer and the public features page hardcode Google Play, Apple App
+Store and Flathub badges. The badge images are served locally (no third-party request
+happens on page load), so the privacy exposure is limited to deliberate clicks, but some
+self-hosting operators prefer their instances not to advertise or link out to the big app
+stores at all. A single boolean setting in the `WGER_SETTINGS` family (for example
+`SHOW_APP_STORE_LINKS`, default on) wrapped around those template blocks would cover the
+preference cleanly; today the only options are template overrides or reverse-proxy content
+filtering, both of which age badly across releases.
+
 ## The `wger` CLI depends on a readable HOME
 
 The CLI is invoke-based, and invoke opens `$HOME/.invoke.yaml` during startup. Under process
