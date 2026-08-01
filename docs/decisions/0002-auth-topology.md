@@ -35,3 +35,28 @@ Operators manage users in wger, not in the Cloudron directory, unless the SSO ex
 lands. Brute-force protection relies on the application's django-axes defaults (enabled). The
 health check path is served by the package nginx and needs no session. Nothing in this
 topology blocks the mobile apps, integrations, or future upstream auth work.
+
+## Amendment (2026-08-01): the SSO experiment landed
+
+Verified end to end on a live installation (authorize, callback, automatic provisioning, a
+logged-in session), so the manifest now declares the `oidc` addon with
+`loginRedirectUri: /account/oidc/cloudron/login/callback/` (the application's REAL allauth
+mount point, read from its URL resolver and confirmed against the live redirect; wger mounts
+allauth at `/account`, singular) and `optionalSso: true`.
+
+Two decisions the experiment forced, both recorded here because they are auth topology:
+
+1. **SSO signup is open while form registration stays closed.** wger routes allauth's social
+   signup-openness through the same toggle as public form registration
+   (`ALLOW_REGISTRATION`, default off in this package), which blocked the first sign-in of
+   every Cloudron user. The package ships a settings shim (`pysettings/cloudron_settings.py`,
+   selected via `DJANGO_SETTINGS_MODULE`, importing upstream settings unchanged) whose only
+   override is a social account adapter that accepts identities the platform has already
+   authenticated. The platform's own user and group access control is the actual gate;
+   public self-registration remains off independently.
+2. **The login button carries the Cloudron's own display name**, because the SocialApp row is
+   reconciled on every boot with `name` taken from `CLOUDRON_OIDC_PROVIDER_NAME`. Packages
+   that hardcode a vendor name lose the operator's branding; this one follows the platform.
+
+The reconciliation is bidirectional: installed without SSO (`optionalSso`), any previously
+seeded SocialApp row is deleted so no dead login button survives a topology change.

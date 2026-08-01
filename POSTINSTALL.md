@@ -1,3 +1,14 @@
+<sso>
+
+## Single sign-on
+
+This app is connected to Cloudron user management. Anyone granted access to the app can use
+the "Sign in with ..." button on the login page (it carries this Cloudron's configured name);
+a wger account is created automatically on first sign-in. The administrator account below is
+app-local and continues to work alongside single sign-on.
+
+</sso>
+
 ## First login
 
 The initial administrator account is:

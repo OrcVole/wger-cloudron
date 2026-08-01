@@ -23,8 +23,12 @@
         "localstorage": {},
         "postgresql": {},
         "redis": {},
-        "sendmail": {}
+        "sendmail": {},
+        "oidc": {
+            "loginRedirectUri": "/account/oidc/cloudron/login/callback/"
+        }
     },
+    "optionalSso": true,
     "tags": ["fitness", "workout", "nutrition", "health", "gym"],
     "mediaLinks": []
 }

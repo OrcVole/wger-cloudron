@@ -40,8 +40,19 @@ State and services:
 - PostgreSQL, Redis (cache and Celery broker/backend) and outgoing email are provided by
   Cloudron addons, not bundled in the image.
 - Uploaded media lives under `/app/data/media` and is backed up with the rest of `/app/data`.
-- Static assets are derived data: they are rebuilt by `collectstatic` on every boot and are
-  deliberately not persisted or backed up.
+- Static assets are derived data, baked into the image by `collectstatic` at build time and
+  served read-only; they change exactly when the image changes and are deliberately not
+  persisted or backed up.
+
+## Single sign-on
+
+The package integrates Cloudron user management through the `oidc` addon and wger's bundled
+django-allauth. The login page offers a "Sign in with ..." button carrying the Cloudron's
+configured display name, and a wger account is provisioned automatically on first sign-in.
+Public self-registration stays disabled independently of this: the Cloudron's own user and
+group access control decides who can reach the app. Installing without user management is
+supported (`optionalSso`); the app then uses purely local accounts, and no stale login button
+is left behind.
 
 ## What is deliberately not included
 
