@@ -42,9 +42,14 @@ def main():
                 'process %s entered FATAL; shutting supervisord down so the container '
                 'exits and the platform sees the failure' % data.get('processname', '?')
             )
+            # stdout here is the eventlistener protocol channel: supervisorctl's own output
+            # ("Shut down") must never reach it, or supervisord logs a protocol violation
+            # (observed live 2026-08-01). Discard both streams.
             subprocess.run(
                 ['supervisorctl', '-c', SUPERVISOR_CONF, 'shutdown'],
                 check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         write_stdout('RESULT 2\nOK')
 

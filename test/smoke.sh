@@ -40,7 +40,12 @@ cleanup() {
     echo "--- cleanup ---"
     "${CRI}" rm -f "${APP_NAME}" "${PG_NAME}" "${REDIS_NAME}" >/dev/null 2>&1 || true
     "${CRI}" network rm "${NET}" >/dev/null 2>&1 || true
-    [[ -n "${DATA_DIR}" ]] && rm -rf "${DATA_DIR}" || true
+    # Files the container wrote into the bind mount are owned by a subuid on the host, so a
+    # plain rm can fail with "Operation not permitted" under rootless podman; podman unshare
+    # re-enters the user namespace where those uids are ours to delete.
+    if [[ -n "${DATA_DIR}" ]]; then
+        rm -rf "${DATA_DIR}" 2>/dev/null || "${CRI}" unshare rm -rf "${DATA_DIR}" 2>/dev/null || true
+    fi
     exit "${ec}"
 }
 trap cleanup EXIT INT TERM
@@ -96,7 +101,7 @@ done
 echo "--- starting app container ---"
 "${CRI}" run -d --name "${APP_NAME}" --network "${NET}" \
     -p "127.0.0.1::8000" \
-    -v "${DATA_DIR}:/app/data" \
+    -v "${DATA_DIR}:/app/data:Z" \
     -e CLOUDRON_POSTGRESQL_HOST="${PG_NAME}" \
     -e CLOUDRON_POSTGRESQL_PORT="5432" \
     -e CLOUDRON_POSTGRESQL_USERNAME="${PG_USER}" \
@@ -117,6 +122,9 @@ CONTAINER_START_EPOCH="$(date +%s)"
 HOST_PORT="$("${CRI}" port "${APP_NAME}" 8000/tcp 2>/dev/null | head -1 | sed -E 's/.*:([0-9]+)$/\1/')"
 if [[ -z "${HOST_PORT}" ]]; then
     fail "could not determine the published host port for ${APP_NAME}/8000"
+    echo "--- app container state and logs (most likely the container failed to start) ---"
+    "${CRI}" ps -a --filter "name=${APP_NAME}" --format '{{.Status}}' || true
+    "${CRI}" logs "${APP_NAME}" 2>&1 | tail -40 || true
     exit 1
 fi
 BASE_URL="http://127.0.0.1:${HOST_PORT}"
