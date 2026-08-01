@@ -1,6 +1,8 @@
 # ADR 0003: secrets and first-run initialisation
 
-Status: accepted, 2026-08-01.
+Status: accepted, 2026-08-01. First-run mechanics amended the same day by ADR 0005 (the
+`wger bootstrap` delegation described below was replaced by explicit idempotent steps after
+live failures on the platform database); the secrets rules in this document stand unchanged.
 
 ## Context
 

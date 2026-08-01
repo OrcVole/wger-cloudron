@@ -4,6 +4,49 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-08-01: runtime smoke, first platform install, SSO experiment
+
+Everything below was found by RUNNING the package, first under the local smoke harness, then
+on a real Cloudron installation. None of it was caught by static review, and two items cannot
+be caught locally at all.
+
+**Verified (each one cost a live failure):**
+
+- **Django management output must be sentinel-extracted.** Django's app-ready logging (for
+  example django-axes' startup banner) writes to stdout, so any value captured from
+  `manage.py shell` by command substitution carries log noise. The package's database probe
+  misread a fresh database as populated because of this; every captured value now uses a
+  sentinel-prefixed line extracted with `sed`, never a comparison of the whole captured blob.
+- **supervisord does not reset HOME when dropping privileges.** A program with
+  `user=cloudron` inherits root's `HOME=/root`. The `wger` CLI is invoke-based, and invoke
+  opens `$HOME/.invoke.yaml` at startup, which dies with EACCES as an unprivileged user. The
+  entrypoint exports `HOME=/app/data` before supervisord starts.
+- **wger 2.6's `core.0023_create_publication` requires a database superuser**
+  (`CREATE PUBLICATION powersync FOR ALL TABLES`). The Cloudron PostgreSQL addon user is not
+  one, so the migration kills the first migrate with
+  `psycopg.errors.InsufficientPrivilege`. A local postgres sidecar cannot reproduce this
+  (its bootstrap user IS a superuser). The package fakes exactly this migration; see
+  ADR 0005.
+- **`wger bootstrap` gates itself on table existence**, so a half-initialised database
+  (tables, zero users, the state a failed first migrate leaves behind) makes it a silent
+  no-op and wedges the install permanently. The package now runs the equivalent steps
+  explicitly and idempotently; see ADR 0005.
+- **wger mounts django-allauth at `/account` (singular).** The OIDC callback is
+  `/account/oidc/<provider_id>/login/callback/`. Guessing the conventional plural
+  `/accounts/...` produces a redirect URI registration that can never match; the live
+  redirect was captured from the running application before the manifest value was trusted.
+- **The anonymous front page is a redirect chain, not a bare 200**: `/` answers 302 to a
+  locale path and lands on the public features page. Health probes and smoke assertions must
+  follow redirects; upstream's own healthcheck accepts 2xx/3xx for the same reason.
+
+**Assumed, then corrected:**
+
+- The smoke test's process-audit originally detected its own `podman exec` shell as a rogue
+  root process (the image's default user is root, so the checker enters as root). Assertion
+  shells that walk `/proc` must exclude their own process tree.
+- First-run recovery was assumed delegable to upstream's bootstrap task; the wedge above
+  disproved that. Recovery logic has to own every step it is responsible for resuming.
+
 ## 2026-08-01: recon and repository scaffold
 
 Recon confirmed no existing Cloudron package of wger anywhere (official store, community store,
