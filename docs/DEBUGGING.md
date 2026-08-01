@@ -77,3 +77,25 @@ allauth-headless long-lived refresh JWT backed by a tagged session row), then
 REJECTS the headless refresh token ("Token has no type"): the two token systems coexist and
 are not interchangeable. The headless token routes exist for the app client only and mount at
 /allauth/app/v1/tokens/refresh, with no auth path segment.
+
+### Gate 3: update and backup/restore survival (PASS, 2026-08-01)
+
+Recipe: capture baseline state (sha256 and mode of all four secrets, row counts for
+auth_user, socialaccount_socialaccount, weight_weightentry and gallery_image, sha256 of every
+file under /app/data/media); run a real `cloudron update --app --image @<digest>`; re-capture
+and diff; take a real backup (`cloudron backup create`); run a real in-place
+`cloudron restore --app --backup <id>`; re-capture, diff and confirm the boot branch. The
+capture script is reusable at the next version bump.
+
+| Invariant | Update | Restore |
+|---|---|---|
+| secret sha256 (4 files) | byte-identical (71bf0a36, e331de3d, 6201f0b1, 5cb19e0a) | byte-identical (same four prefixes) |
+| secret mode and owner | 600, 1000:1000 | 600, 1000:1000, re-asserted by the post-restore boot (start.sh re-asserts on every boot by design) |
+| boot path | "secret material present", no seeding lines; "database already has data: first-run fixtures will be skipped" | same two branch lines observed |
+| data per store | auth_user 2, socialaccount 1, weightentry 1, gallery_image 1; media file sha256 unchanged | identical counts and media sha256 |
+| platform | update task clean, 84 s | backup task clean; restore task clean, "App is restored", 287 s |
+
+The application keeps no bundled database with background file churn (PostgreSQL is the
+addon; /app/data holds only media, secrets and the operator env file), so no
+backupCommand/restoreCommand quiescing is required; nothing in the backup or restore task
+logs suggested syncer trouble.
