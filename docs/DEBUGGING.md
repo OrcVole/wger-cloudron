@@ -50,3 +50,30 @@ rows from the application database (docker exec with the app's own database envi
 | public paths | api root 200 application/json, exercise data 200, healthcheck 200, static asset 200, all without a session while SSO is active | PASS |
 | protected paths | dashboard 302 to /user/login?next=/en/dashboard; unauthenticated API write 403 | PASS |
 | architecture | local admin form login 302 to the home page and dashboard 200 with that session (optionalSso holds); no proxyAuth anywhere | PASS |
+
+### Gate 2: functional flows (PASS, 2026-08-01)
+
+Recipe: log in as admin for a session; POST /api/v2/issue-refresh-token (X-CSRFToken from the
+cookie) for the headless refresh JWT; exchange it at /allauth/app/v1/tokens/refresh (JSON
+{"refresh_token": ...}); use the RS256 access token as Bearer for the API writes; upload a
+generated PNG through /api/v2/gallery/ and compare sha256 across upload, /media/ download and
+the on-disk file; POST the password-reset form with a URL-encoded email; on the rig, celery
+inspect ping with the worker's broker environment, check /run/wger for the beat schedule and
+run a Django cache round-trip with the app's cache settings.
+
+| Invariant | Proof | Verdict |
+|---|---|---|
+| flow: mobile JWT chain | refresh token issued via session; /allauth/app/v1/tokens/refresh 200; access JWT header alg RS256 (kid of the seeded keypair); Bearer accepted by the API | PASS |
+| flow: API weight write | count before 0; POST 201 body id=1 date=2026-08-01 weight=82.40; count after exactly 1 with the same values | PASS |
+| flow: media bytes | gallery POST 201; download via /media/ 200; sha256 prefix aad4620d7237237f identical across uploaded bytes, downloaded bytes and the on-disk file under /app/data/media/gallery/ (owner 1000:1000) | PASS |
+| flow: password reset email (sendmail) | POST 302 to /en/user/password/reset/done/; the synchronous SMTP hand-off to the addon relay raised no error; no SMTP error lines in the log | PASS |
+| services and addons | celery worker pong (1 node online) over the addon broker; beat schedule file in /run/wger; Django cache round-trip returned its value through addon redis db 0; postgresql exercised by the writes; localstorage by the media file; sendmail by the reset; oidc by gate 1 | PASS |
+| routing | every probe ran from outside the rig against the public hostname; wger makes no self-calls by public name, so hairpin does not apply and no fallback was needed | PASS |
+
+Flow discoveries recorded for the next version bump: wger 2.6 has no password-grant JWT
+endpoint; the mobile chain is session or headless login, then /api/v2/issue-refresh-token (an
+allauth-headless long-lived refresh JWT backed by a tagged session row), then
+/allauth/app/v1/tokens/refresh for the RS256 access token. SimpleJWT's /api/v2/token/refresh
+REJECTS the headless refresh token ("Token has no type"): the two token systems coexist and
+are not interchangeable. The headless token routes exist for the app client only and mount at
+/allauth/app/v1/tokens/refresh, with no auth path segment.
