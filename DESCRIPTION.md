@@ -1,3 +1,5 @@
+<upstream>2.6</upstream>
+
 # wger
 
 wger (pronounced "ˈvɛɡɐ") is a free, open source workout, fitness and nutrition manager. It
