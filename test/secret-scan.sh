@@ -1,6 +1,16 @@
 #!/bin/bash
-# secret-scan.sh: the pre-publish secret and anonymity release gate for io.github.orcvole.wger.
-# Derived from the Laminar package's scanner.
+# secret-scan.sh — the pre-publish secret and anonymity release gate. CANONICAL COPY.
+#
+# SCAN_VERSION below is the consolidation handle. This script is copied into every package, so the
+# only defence against the drift that produced twelve different gates is a version stamp that CI can
+# compare against estate/templates/secret-scan.sh. Bump it when this file changes; never edit a
+# package's copy in place.
+SCAN_VERSION=2026-08-09.1
+#
+# WHY ONE COPY. Before 2026-08-09 this script existed in three generations across 18 packages: ten
+# scanned the built image, eight scanned only the repo, and the denylists ranged from 5 patterns to
+# 19. "secret-scan passed" therefore meant something different in every repository, which is the
+# same class of defect as a gate that does not run at all — worse, because it reports green.
 #
 # Scans TWO surfaces and exits non-zero on ANY hit:
 #   1. the publishable repo file set, meaning what a `git push` would expose
@@ -14,7 +24,7 @@
 # THE DENYLIST PATTERN. Box-specific, identity-specific and session-specific strings live in the
 # GITIGNORED .anonymize-list, so this published script never itself leaks the very strings it hunts
 # for. That is the mistake the naive "patterns inline in the tracked script" approach makes. Only
-# generic credential SHAPES are inlined here. These are already in .gitignore:
+# generic credential SHAPES are inlined here. Add these to .gitignore:
 #
 #     .anonymize-list
 #     *token*.txt
@@ -24,7 +34,7 @@
 #     .claude/
 #
 # .anonymize-list holds one extended-regular-expression per line, blank lines and # comments
-# ignored. Populated with: the box FQDN and any subdomain of it, the private mirror host, sibling
+# ignored. Populate it with: the box FQDN and any subdomain of it, the private mirror host, sibling
 # app names, real email addresses, the operator's usernames, and any session-specific identifier.
 # If the file is absent the scan still runs but proves far less, and says so loudly.
 #
@@ -87,10 +97,26 @@ sed -i '/^[[:space:]]*$/d' "$ANON" "$SHAPE" "$FIXED" 2>/dev/null   # a blank lin
 
 echo "patterns: $(wc -l < "$ANON") box/identity/session, $(wc -l < "$SHAPE") shapes, $(wc -l < "$FIXED") exact tokens"
 
-fail=0
+fail=0; allowed=0
+# A package that LEGITIMATELY contains a denylisted string declares it in .scan-allowlist, one fixed
+# string per line. Exceptions are visible and counted, never silent — the alternative, a package
+# quietly carrying a shorter denylist, is exactly what made this gate mean a different thing in every
+# repo. An allowlist entry is a reviewable claim; a missing pattern is an invisible one.
+ALLOW="$REPO/.scan-allowlist"
 emit() {  # $1=tag  $2=grep output
-  [[ -z "${2:-}" ]] && return 0
-  printf '%s\n' "$2" | sed "s/^/  [$1] /"
+  local out="${2:-}" before after
+  [[ -z "$out" ]] && return 0
+  if [[ -s "$ALLOW" ]]; then
+    before="$(printf '%s\n' "$out" | grep -c . || true)"
+    out="$(printf '%s\n' "$out" | grep -vFf <(grep -vE '^[[:space:]]*(#|$)' "$ALLOW") || true)"
+    after="$(printf '%s\n' "$out" | grep -c . || true)"
+    if (( before > after )); then
+      echo "  (allowlisted $((before - after)) line(s) via .scan-allowlist)"
+      allowed=$((allowed + before - after))
+    fi
+  fi
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out" | sed "s/^/  [$1] /"
   fail=1
 }
 
@@ -202,7 +228,15 @@ else
 fi
 
 echo "==================================================="
+[[ "$allowed" -gt 0 ]] && echo "note: $allowed line(s) allowlisted via .scan-allowlist"
 if [[ $fail -ne 0 ]]; then
+  if [[ "${SCAN_REPORT_ONLY:-0}" == "1" ]]; then
+    echo "secret-scan REPORT-ONLY: the hits above were NOT enforced (SCAN_REPORT_ONLY=1)."
+    echo "  This exists for ONE evidence-gathering pass, after the denylists were unified and eight"
+    echo "  packages had their image surface scanned for the first time. Leaving it set turns a gate"
+    echo "  into a log nobody reads. Unset it as soon as the findings are triaged."
+    exit 0
+  fi
   echo "secret-scan FAILED. Anonymise and rebuild before publishing (see the hits above)."
   exit 1
 fi

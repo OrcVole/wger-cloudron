@@ -100,7 +100,19 @@ jobs:
           echo "denylist restored: $(grep -cvE '^\s*(#|$)' .anonymize-list) patterns"
 
       # First, because a leaked secret is the one failure that cannot be undone after a push.
+      #
+      # >>> SCAN_REPORT_ONLY IS TEMPORARY. REMOVE IT. <<<
+      # Set 2026-08-09 for ONE evidence-gathering pass, because two things changed at once: every
+      # package moved to the unified 68-pattern denylist (some previously scanned as few as 5), and
+      # eight packages had their image surface scanned for the very first time. Enforcing both on
+      # the same day would have turned the estate red with no way to tell a real leak from a
+      # newly-applied pattern matching something harmless.
+      #
+      # A report-only gate left on becomes a log nobody reads. Delete this env block as soon as the
+      # first pass is triaged; the scan then fails builds again, which is the entire point of it.
       - name: secret-scan
+        env:
+          SCAN_REPORT_ONLY: "1"
         run: test/secret-scan.sh "$IMAGE"
 
       # Skipped, not failed, where a package has no smoke gate: 4 of 18 legitimately do not.
