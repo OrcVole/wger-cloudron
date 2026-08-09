@@ -5,7 +5,7 @@
 # only defence against the drift that produced twelve different gates is a version stamp that CI can
 # compare against estate/templates/secret-scan.sh. Bump it when this file changes; never edit a
 # package's copy in place.
-SCAN_VERSION=2026-08-09.1
+SCAN_VERSION=2026-08-09.2
 #
 # WHY ONE COPY. Before 2026-08-09 this script existed in three generations across 18 packages: ten
 # scanned the built image, eight scanned only the repo, and the denylists ranged from 5 patterns to
@@ -163,12 +163,28 @@ else
     printf '%s' "$s"
   }
 
-  # grep INSIDE the image; patterns arrive on stdin. node_modules and .git pruned (upstream noise).
+  # VENDORED TREES are third-party code we did not write, and an estate identity string cannot leak
+  # INTO a PyPI wheel, a Next.js build chunk or the Go standard library. They are also enormous.
+  # Measured 2026-08-09, the first time eight packages ever had their image scanned: 746 of 746 hits
+  # came from exactly these directories and NOT ONE was authored content — 711 from site-packages
+  # alone (Google API schemas, botocore fixtures), the rest from .next bundles, a HuggingFace
+  # vocabulary and Go stdlib test data. A gate that reports 746 non-findings is a gate nobody reads.
+  #
+  # Excluded from the ANON and SHAPE sweeps ONLY. The FIXED-token sweep still covers them, because a
+  # real credential copied into a venv IS possible — and that sweep can say so without drowning the
+  # result, since it matches exact known secrets rather than shapes and common words.
+  VENDOR_EXCLUDES=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=site-packages
+                   --exclude-dir=dist-packages --exclude-dir=.venv --exclude-dir=vendor
+                   --exclude-dir=third_party --exclude-dir=.next
+                   --exclude-dir=go)   # /usr/local/go/src: the Go toolchain, shipped by some images
   img() {  # $1=E|F  $2=pattern file  $3..=dirs
     local mode="$1" pf="$2"; shift 2
     [[ -s "$pf" ]] || return 0
+    local ex=""
+    [[ "$mode" == "E" ]] && ex="${VENDOR_EXCLUDES[*]}"   # anon/shape only; F keeps full reach
+    [[ "$mode" == "F" ]] && ex="--exclude-dir=.git"
     "$CRI" run --rm -i --user 0 "${RUNFLAGS[@]}" --entrypoint /bin/bash "$IMAGE" \
-      -c "grep -rIn${mode}H --exclude-dir=node_modules --exclude-dir=.git -f - $* 2>/dev/null" < "$pf"
+      -c "grep -rIn${mode}H $ex -f - $* 2>/dev/null" < "$pf"
   }
   CRIT_DIRS="/app /etc /root /home /usr/local /opt"
   emit anon  "$(drop_runtime "$(img E "$ANON"  $CRIT_DIRS)")"
