@@ -1,4 +1,4 @@
-<sso>
+`<sso>`
 
 ## Single sign-on
 

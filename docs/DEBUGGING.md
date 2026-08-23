@@ -105,7 +105,7 @@ logs suggested syncer trouble.
 The application has no memory-mapped store in the container (anon 424 MiB versus file 32 KiB
 at idle; PostgreSQL is the addon), so memory.peak is the verdict counter. Counters read from
 the container's cgroup v2 tree on the host (this host keeps Docker cgroups under
-/sys/fs/cgroup/docker/<id>, found via the container init process's /proc cgroup entry;
+/sys/fs/cgroup/docker/`<id>`, found via the container init process's /proc cgroup entry;
 memory.peak reset was refused, so the peak covers the container boot, which is the honest
 figure anyway).
 

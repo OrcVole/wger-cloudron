@@ -1,4 +1,4 @@
-<upstream>2.6</upstream>
+`<upstream>`2.6</upstream>
 
 # wger
 
