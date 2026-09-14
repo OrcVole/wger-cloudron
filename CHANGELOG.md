@@ -1,5 +1,14 @@
 # Changelog
 
+[1.1.0]
+
+- Upstream wger 2.6 to 2.7.
+- Workout sessions now use datetime fields instead of separate date and time fields; past session data is backfilled automatically using the instance timezone.
+- WeightEntry table migrated into the measurements system; the `/api/v2/weightentry/` endpoint remains functional but is deprecated.
+- New configuration options: `WGER_MAX_SESSION_LENGTH_HOURS`, `WGER_SHOW_APP_STORE_LINKS`, `USE_X_FORWARDED_HOST`.
+- Measurement categories now support health sync.
+- Timezone-aware streaks and trophies.
+
 ## [1.0.0]
 
 - Initial package, wrapping wger 2.6.

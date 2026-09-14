@@ -79,11 +79,18 @@ seed_secrets() {
         # settings/main.py decodes these itself (jwk_b64_to_pem) at import time, so the files
         # below store the values exactly as printed -- still base64-JWK-encoded, not decoded --
         # and are re-exported verbatim as JWT_PRIVATE_KEY/JWT_PUBLIC_KEY on every boot.
-        # DJANGO_DB_ENGINE is deliberately not yet set at this point in the script (infrastructure
-        # is forced further down); settings/main.py's sqlite fallback branch loads fine without
-        # it and this command never touches a database, so no dummy DB values are needed either.
+          # wger 2.7 requires DJANGO_DB_ENGINE to be set even for generate-jwt-keys (settings/main.py
+          # no longer has a safe sqlite fallback when the env var is absent). Dummy values suffice
+          # because this command never touches a database -- it only generates key material.
         local jwt_out
-        jwt_out="$(SECRET_KEY="$(cat "${secret_key_file}")" gosu cloudron:cloudron \
+        jwt_out="$(SECRET_KEY="$(cat "${secret_key_file}")" \
+            DJANGO_DB_ENGINE='django.db.backends.sqlite3' \
+            DJANGO_DB_DATABASE='/tmp/wger-build.sqlite3' \
+            DJANGO_DB_USER='build' \
+            DJANGO_DB_PASSWORD='build' \
+            DJANGO_DB_HOST='localhost' \
+            DJANGO_DB_PORT='5432' \
+            gosu cloudron:cloudron \
             python3 "${MANAGE}" generate-jwt-keys 2>/dev/null)" || { echo "==> FATAL: generate-jwt-keys failed" >&2; exit 1; }
         local priv pub
         priv="$(printf '%s\n' "${jwt_out}" | sed -n 's/^JWT_PRIVATE_KEY=//p')"

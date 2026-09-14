@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Build shape per docs/decisions/0001-build-shape.md: copy the upstream wger 2.6 image's
+# Build shape per docs/decisions/0001-build-shape.md: copy the upstream wger 2.7 image's
 # installed python tree and source tree, unchanged, onto the Cloudron base image. Both images
 # are Ubuntu 24.04 with Python 3.12.3 and a uid/gid-1000 application user, so the copy needs no
 # recompilation and no apt packages in the final stage (verified locally, see phase-notes and
@@ -11,13 +11,13 @@
 # pinned by DIGEST, not by this ARG or by a tag: docker.io/wger/server re-pushes both `latest`
 # and its version tags on every push to upstream master, so a tag alone is never trustworthy
 # (docs/decisions/0001-build-shape.md, AGENTS.md golden rule 2). The digest below was resolved
-# from the `2.6` tag with skopeo on 2026-08-01; the image's own Created timestamp
-# (2026-06-17T08:34:47Z) matches the 2.6 release date, cross-checked in phase-notes/phase-2.md.
-ARG WGER_VERSION=2.6
+# from the `2.7` tag with skopeo on 2026-09-14; the image's own Created timestamp
+# matches the 2.7 release date, cross-checked in evidence/wger/prefetch/releases.md.
+ARG WGER_VERSION=2.7
 
-# Stage 1: upstream wger 2.6 image, source of /home/wger/.local (pip user-site, ~662 MiB) and
+# Stage 1: upstream wger 2.7 image, source of /home/wger/.local (pip user-site, ~662 MiB) and
 # /home/wger/src (application source, settings, node_modules for STATICFILES_DIRS, ~64 MiB).
-FROM docker.io/wger/server@sha256:997ead43aabdcd67d054f933e07d2b23875f01bf43271a267cb7796925ca27c4 AS upstream
+FROM docker.io/wger/server@sha256:1c5789b93bfe5eed0b7287255782d9177027b255de2b22b59f511a693a48db04 AS upstream
 
 # Stage 2: the Cloudron base image. This is the ONLY stage that ships; it must stay
 # cloudron/base so platform tooling (file manager, web terminal, log viewer) keeps working.
