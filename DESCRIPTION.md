@@ -9,8 +9,8 @@ includes barcode scanning. A gym management mode lets a trainer administer membe
 routines and record progress on their behalf.
 
 A REST API ships alongside the web application and is the same API used by the official wger
-mobile apps (Android and iOS), so the app installed from this package can be used from a phone
-as well as a browser.
+mobile apps (Android and iOS). Current versions of those apps also need PowerSync, which this
+package does not yet include; see below.
 
 This package runs wger's own gunicorn application server together with its Celery worker and
 beat scheduler under supervisor, fronted by nginx. It uses the Cloudron PostgreSQL and Redis
@@ -23,6 +23,7 @@ exercises, images and translations; this is on by default and configurable. Ingr
 synchronisation against wger.de is off by default, because the ingredient dataset is large and
 grows the database considerably; it can be turned on if wanted.
 
-Not included in this package version: PowerSync, the component upstream uses for offline
-synchronisation in the mobile apps. Online use of the web application and the mobile apps is
-expected to work fully; offline mobile sync is the one feature this package does not provide.
+Not included in this package version: PowerSync, the synchronisation service the official
+mobile apps use. Mobile app releases from 2.0 onward will not finish signing in without it:
+they report that the sync service is unreachable. The web application, which works in a
+phone's browser, and the REST API are unaffected. Adding PowerSync is being worked on.

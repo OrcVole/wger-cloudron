@@ -56,11 +56,17 @@ is left behind.
 
 ## What is deliberately not included
 
-PowerSync, the upstream component used for offline synchronisation in the mobile apps, is not
-part of this package. Online use of the web application and the official mobile apps is expected
-to work fully; offline mobile sync is the one upstream feature this package does not provide.
-This is a scope decision for the first package version, not a technical dead end, and may be
-revisited in a future version.
+PowerSync, the synchronisation service used by the official mobile apps, is not part of this
+package. **The mobile apps require it from version 2.0 onward**: that release made the app
+offline-first, and against a server without PowerSync it stops after sign-in and reports that the
+sync service is unreachable. The wger versions this package ships refuse app versions older than
+2.0, so an older app is not a workaround.
+
+Until this package includes PowerSync, use the web application, which works in a phone's
+browser, or the REST API. The web application and API are not affected.
+
+PowerSync needs PostgreSQL logical replication, which the Cloudron PostgreSQL addon does not
+provide to apps, so adding it is a larger change than adding a process. It is being worked on.
 
 ## Backup and restore
 

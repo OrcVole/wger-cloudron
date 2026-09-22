@@ -22,8 +22,10 @@ Topology, one row per process, all logging to stdout:
 State: PostgreSQL and Redis (cache plus Celery broker/backend) come from Cloudron addons;
 outgoing email goes through the Cloudron `sendmail` addon. Uploaded media and the two seeded
 secrets live under `/app/data`. Static assets are derived data, rebuilt on every boot, and
-deliberately not persisted. PowerSync, upstream's mobile offline-sync component, is deliberately
-not included in this package version.
+deliberately not persisted. PowerSync, upstream's mobile sync service, is
+not included in this package version. Mobile app 2.0 and later cannot finish signing in without
+it, and it needs PostgreSQL logical replication, which the addon does not grant (`wal_level` is
+`replica`, and app roles have neither superuser nor `REPLICATION`).
 
 ## Golden rules
 
