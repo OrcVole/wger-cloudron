@@ -20,7 +20,7 @@ The initial administrator account is:
 Read the password using the Cloudron file manager, or open the web terminal for this app and
 run:
 
-```
+```bash
 cat /app/data/.secrets/admin-password
 ```
 

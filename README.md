@@ -16,7 +16,7 @@ stated otherwise.
 
 ## Installing
 
-```
+```bash
 cloudron install --appstore-id io.github.orcvole.wger
 ```
 
