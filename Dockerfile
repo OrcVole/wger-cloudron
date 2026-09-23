@@ -19,7 +19,13 @@ ARG WGER_VERSION=2.7
 # /home/wger/src (application source, settings, node_modules for STATICFILES_DIRS, ~64 MiB).
 FROM docker.io/wger/server@sha256:1c5789b93bfe5eed0b7287255782d9177027b255de2b22b59f511a693a48db04 AS upstream
 
-# Stage 2: the Cloudron base image. This is the ONLY stage that ships; it must stay
+# Stage 2: PowerSync, the mobile apps' sync service (docs/decisions/0006). Pinned by digest; upstream
+# wger's own compose runs `:latest`. Only its Node binary and its /app tree are copied below; both were
+# tested on Ubuntu 24.04 (the base's glibc 2.39 is older than this Debian 13 image's 2.41, and the
+# portable Node build and the one native add-on, snappy, both load).
+FROM docker.io/journeyapps/powersync-service@sha256:413a0c813e96935ebe7203b5759f8a594a7b7cd8aa42134713e63af637e0f079 AS powersync
+
+# Stage 3: the Cloudron base image. This is the ONLY stage that ships; it must stay
 # cloudron/base so platform tooling (file manager, web terminal, log viewer) keeps working.
 FROM cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c
 
@@ -32,6 +38,27 @@ LABEL org.opencontainers.image.version="${WGER_VERSION}" \
 # `cloudron` in this stage; no --chown is needed (docs/decisions/0001-build-shape.md).
 COPY --from=upstream /home/wger/.local /home/wger/.local
 COPY --from=upstream /home/wger/src /home/wger/src
+
+# PostgreSQL 18 from the PostgreSQL project's own apt repository (PGDG), because Ubuntu 24.04 stops at
+# 16 and the one-time move off the addon must dump an older-or-equal server into a newer one, never
+# the reverse (docs/decisions/0006). postgresql-common would create a "main" cluster under /var/lib at
+# install time; the package's cluster lives in the /app/pgdata persistentDir instead, so that
+# default cluster is removed in the same layer.
+RUN set -eux; \
+    install -d /usr/share/postgresql-common/pgdg; \
+    curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql-18 postgresql-client-18; \
+    rm -rf /var/lib/postgresql/18/main /etc/postgresql/18/main; \
+    rm -rf /var/lib/apt/lists/*; \
+    /usr/lib/postgresql/18/bin/postgres --version; \
+    locale -a | grep -qi '^en_US\.utf8$'
+
+# PowerSync's own Node runtime and service tree, unmodified, plus its licence (FSL-1.1-ALv2).
+COPY --from=powersync /usr/local/bin/node /opt/powersync/bin/node
+COPY --from=powersync /app /opt/powersync/app
+COPY LICENSE.powersync /opt/powersync/LICENSE
 
 # Image environment mirrors upstream's own (verified in phase-notes/phase-2.md): PYTHONPATH
 # and DJANGO_SETTINGS_MODULE are what upstream bakes in, PYTHONUSERBASE is pinned explicitly so
@@ -92,12 +119,23 @@ RUN set -eux; \
 # bootstrap.sh's own header comments for why.
 COPY start.sh /app/code/start.sh
 COPY bootstrap.sh /app/code/bootstrap.sh
+COPY backup.sh restore.sh /app/code/
+COPY postgres/ /app/code/postgres/
+COPY powersync/powersync.yaml powersync/sync_rules.yaml powersync/run.sh powersync/compact-loop.sh /app/code/powersync/
 COPY nginx/wger.conf /app/code/nginx/wger.conf
 COPY supervisor/supervisord.conf /app/code/supervisor/supervisord.conf
 COPY supervisor/fatal-exit-listener.py /app/code/supervisor/fatal-exit-listener.py
 COPY supervisor/conf.d/ /app/code/supervisor/conf.d/
 
-RUN chmod 0755 /app/code/start.sh /app/code/bootstrap.sh
+RUN set -eux; \
+    chmod 0755 /app/code/start.sh /app/code/bootstrap.sh /app/code/backup.sh /app/code/restore.sh \
+        /app/code/postgres/run.sh /app/code/powersync/run.sh /app/code/powersync/compact-loop.sh; \
+    chmod 0644 /app/code/postgres/pg.sh /app/code/postgres/pg_hba.conf \
+        /app/code/powersync/powersync.yaml /app/code/powersync/sync_rules.yaml; \
+    mkdir -p /app/pgdata; \
+    chown cloudron:cloudron /app/pgdata; \
+    /opt/powersync/bin/node --version; \
+    /opt/powersync/bin/node /opt/powersync/app/service/lib/entry.js --help > /dev/null
 
 WORKDIR /app/code
 

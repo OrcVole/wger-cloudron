@@ -1,4 +1,4 @@
-`<sso>`
+<sso>
 
 ## Single sign-on
 
@@ -25,6 +25,21 @@ cat /app/data/.secrets/admin-password
 ```
 
 Change the administrator password after first login.
+
+## Mobile apps
+
+The official wger apps (Android and iOS, including the F-Droid build for phones without Google
+services) connect with just this app's address. They sync through PowerSync, which runs inside
+this app; there is nothing to set up. Rotating the JWT keys in `/app/data/.secrets` signs every
+phone out.
+
+## Database and backups
+
+wger's database runs inside this app rather than in the Cloudron PostgreSQL addon, because the
+mobile sync needs a feature the addon does not offer. Each backup includes a consistent copy of
+it, and restoring a backup (in place or as a clone) returns the database to that backup. An
+install updated from a 1.x version was copied out of the addon automatically on its first start;
+the addon copy is kept unchanged as a rollback copy and is no longer used.
 
 ## Registration
 

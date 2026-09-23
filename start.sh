@@ -25,6 +25,8 @@ log() { printf '==> %s\n' "$*"; }
 
 SECRETS_DIR=/app/data/.secrets
 MANAGE="/home/wger/src/manage.py"
+# shellcheck source=postgres/pg.sh
+source /app/code/postgres/pg.sh
 
 urlencode() {
     python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
@@ -106,7 +108,51 @@ seed_secrets() {
         unset jwt_out priv pub
     fi
 
-    log "secret material present: SECRET_KEY=yes JWT_PRIVATE_KEY=yes JWT_PUBLIC_KEY=yes (values never logged)"
+    # Passwords for the bundled PostgreSQL's two login roles (docs/decisions/0006). Hex, so they
+    # never need quoting in a connection URI. bootstrap.sh and restore.sh re-assert them on the
+    # roles every time, so the files are the single source of truth.
+    local name
+    for name in db-wger db-powersync; do
+        if [[ ! -s "${SECRETS_DIR}/${name}" ]]; then
+            log "seeding ${name} password (first boot of the bundled database)"
+            ( umask 077; openssl rand -hex 24 > "${SECRETS_DIR}/${name}" )
+        fi
+    done
+
+    log "secret material present: SECRET_KEY=yes JWT_PRIVATE_KEY=yes JWT_PUBLIC_KEY=yes db-wger=yes db-powersync=yes (values never logged)"
+}
+
+# The bundled PostgreSQL's data directory (docs/decisions/0006). Fast by design, so it stays in
+# start.sh: at most one initdb of an empty cluster (a second or two). The slow, database-dependent
+# work (the one-time move off the addon, migrations) is bootstrap.sh's, after nginx is up.
+prepare_postgres() {
+    mkdir -p "${PGROOT}" "${DB_DIR}" /run/powersync
+    chown cloudron:cloudron "${PGROOT}" "${DB_DIR}" /run/powersync
+    chmod 0700 "${PGROOT}"
+    # A restore or the backup container (which runs as root) can leave files root-owned. Walk only
+    # what is wrong rather than chown -R an entire cluster on every boot.
+    find "${PGROOT}" -xdev ! -user cloudron -exec chown cloudron:cloudron {} +
+
+    if [[ -s "${PGDATA}/PG_VERSION" ]]; then
+        local have
+        have="$(cat "${PGDATA}/PG_VERSION")"
+        if [[ "${have}" != "${PG_MAJOR}" ]]; then
+            echo "==> FATAL: ${PGDATA} holds a PostgreSQL ${have} cluster but this package runs PostgreSQL ${PG_MAJOR}." >&2
+            echo "==> FATAL: refusing to start rather than create a new cluster beside it. Restore a backup taken by this package version, or ask the packager for an upgrade path." >&2
+            exit 1
+        fi
+        log "bundled PostgreSQL ${PG_MAJOR} cluster present"
+    elif [[ -e "${MARKER}" ]]; then
+        # The marker says the bundled database is authoritative, yet the cluster is gone. On a
+        # clone Cloudron's restoreCommand rebuilds it before this script ever runs, so reaching
+        # here means there was nothing to rebuild from. Starting empty would look like data loss.
+        echo "==> FATAL: ${MARKER} says wger's data lives in the bundled database, but ${PGDATA} is empty." >&2
+        echo "==> FATAL: restore this app from a backup. To deliberately start over with an empty database, delete ${MARKER} first." >&2
+        exit 1
+    else
+        log "initialising an empty PostgreSQL ${PG_MAJOR} cluster in ${PGDATA}"
+        pg_initdb "${PGDATA}"
+    fi
 }
 
 # --- main ------------------------------------------------------------------------------------
@@ -151,6 +197,8 @@ seed_secrets
 # above: a restore can reset permissions on files that already existed (AGENTS.md golden rule 3).
 find "${SECRETS_DIR}" -maxdepth 1 -type f -exec chmod 0600 {} + -exec chown cloudron:cloudron {} +
 
+prepare_postgres
+
 # Operator-tunable defaults, set with the `:=` pattern so an operator override in /app/data/env
 # (sourced next) can replace them. Package-forced infrastructure values are exported further
 # below, AFTER sourcing, so they always win regardless of what the operator file contains.
@@ -183,12 +231,16 @@ export PYTHONUSERBASE=/home/wger/.local
 export PYTHONPATH=/app/code/pysettings:/home/wger/src
 export DJANGO_SETTINGS_MODULE=cloudron_settings
 
+# Django uses the BUNDLED PostgreSQL over its Unix socket, as the non-superuser owner role
+# (docs/decisions/0006). The postgresql addon stays declared only as the source of the one-time
+# move and as the rollback copy; bootstrap.sh reads it through the CLOUDRON_POSTGRESQL_* variables
+# and nothing else touches it. Never export PS_DATABASE_URI here: see powersync/run.sh.
 export DJANGO_DB_ENGINE="django.db.backends.postgresql"
-export DJANGO_DB_DATABASE="${CLOUDRON_POSTGRESQL_DATABASE}"
-export DJANGO_DB_USER="${CLOUDRON_POSTGRESQL_USERNAME}"
-export DJANGO_DB_PASSWORD="${CLOUDRON_POSTGRESQL_PASSWORD}"
-export DJANGO_DB_HOST="${CLOUDRON_POSTGRESQL_HOST}"
-export DJANGO_DB_PORT="${CLOUDRON_POSTGRESQL_PORT}"
+export DJANGO_DB_DATABASE="${PG_DB}"
+export DJANGO_DB_USER="${PG_APP_ROLE}"
+export DJANGO_DB_PASSWORD="$(cat "${SECRETS_DIR}/db-wger")"
+export DJANGO_DB_HOST="${PG_SOCKDIR}"
+export DJANGO_DB_PORT="${PG_PORT}"
 
 redis_pw_enc="$(urlencode "${CLOUDRON_REDIS_PASSWORD}")"
 export DJANGO_CACHE_BACKEND="django_redis.cache.RedisCache"

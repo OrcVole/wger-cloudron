@@ -7,25 +7,37 @@ reason found on a running box. **The box is the authority, not the docs.**
 ## What this package is
 
 wger is a free, open source workout, fitness and nutrition manager with a REST API shared by the
-official mobile apps; this package wraps the upstream 2.6 release as a thin adaptation layer,
-changing only the runtime environment, never the application itself.
+official mobile apps; this package wraps the upstream 2.7 release as a thin adaptation layer,
+changing only the runtime environment, never the application itself. From package 2.0.0 it also
+bundles PostgreSQL 18 and PowerSync 1.26.1 so the mobile apps can sync
+([ADR 0006](docs/decisions/0006-bundled-postgres-and-powersync.md)); read that ADR before touching
+`start.sh`, `bootstrap.sh`, `backup.sh`, `restore.sh` or anything under `postgres/`.
 
 Topology, one row per process, all logging to stdout:
 
 | Process | Role | Port (localhost unless noted) |
 |---|---|---|
-| nginx | Binds `httpPort`, serves `/static/` and `/media/` directly, proxies everything else to gunicorn, answers the health check immediately | 8000 (external) |
-| gunicorn | Django application server | 127.0.0.1, internal |
+| postgres | Bundled PostgreSQL 18, `wal_level=logical`; settings passed as flags from `postgres/pg.sh`, never read from PGDATA | 127.0.0.1:5432 and socket in `/app/pgdata` |
+| nginx | Binds `httpPort`, serves `/static/` and `/media/` directly, proxies `/ps/` to PowerSync and everything else to gunicorn, answers the health check immediately | 8000 (external) |
+| bootstrap | One-shot: roles, the one-time move off the addon, migrations, then starts everything below | none |
+| gunicorn | Django application server | 127.0.0.1:8010 |
 | celery worker | Background jobs: exercise/ingredient sync from wger.de, email, scheduled tasks | none |
 | celery beat | Schedules the periodic Celery jobs | none |
+| powersync | Mobile sync service (unified API + replication) | 127.0.0.1:8080, via nginx `/ps/` |
+| powersync-compact | Daily `compact` of PowerSync's bucket storage | none |
 
-State: PostgreSQL and Redis (cache plus Celery broker/backend) come from Cloudron addons;
-outgoing email goes through the Cloudron `sendmail` addon. Uploaded media and the two seeded
-secrets live under `/app/data`. Static assets are derived data, rebuilt on every boot, and
-deliberately not persisted. PowerSync, upstream's mobile sync service, is
-not included in this package version. Mobile app 2.0 and later cannot finish signing in without
-it, and it needs PostgreSQL logical replication, which the addon does not grant (`wal_level` is
-`replica`, and app roles have neither superuser nor `REPLICATION`).
+State: the database is the **bundled** PostgreSQL, data in the `/app/pgdata` persistentDir.
+PowerSync needs logical replication, which the Cloudron addon does not grant (`wal_level` is
+`replica`, and app roles have neither superuser nor `REPLICATION`). The `postgresql` addon stays
+declared only as the source of the one-time move from 1.x and as a rollback copy; nothing reads it
+once `/app/data/.bundled-db` exists. Redis (cache plus Celery broker/backend) comes from the addon;
+outgoing email goes through the `sendmail` addon. Uploaded media, the seeded secrets and the
+database dump live under `/app/data`. Static assets are derived data baked into the image.
+
+**Never export `PS_DATABASE_URI` outside `powersync/run.sh`.** wger's `settings/main.py` swaps
+Django's whole `DATABASES` for it when it is set, so Django would silently run as the replication
+role. **Test locally with `test/upgrade.sh`** (1.1.0 to 2.0.0 on real data, PowerSync end to end,
+backup, in-place restore, a deliberately failed restore, clone) before any gate.
 
 ## Golden rules
 
@@ -66,7 +78,9 @@ it, and it needs PostgreSQL logical replication, which the addon does not grant 
   is maintainer-local and deliberately not recorded in tracked files.
 - **memoryLimit:** measure, do not guess. Install the test instance with a generous limit so that
   an OOM never masks behaviour, measure warmup peak and steady state, then set the shipped floor
-  from the gate ladder's memory gate. Provisionally 2 GiB (`2147483648`) pending that measurement.
+  from the gate ladder's memory gate. Provisionally 3 GiB (`3221225472`) from 2.0.0, because
+  PostgreSQL and PowerSync now share the limit; **not yet measured**: the memory gate, with a
+  phone syncing, sets it.
 - **Health:** `healthCheckPath = /healthcheck`, served immediately by nginx rather than proxied
   to Django, because upstream has no dedicated health endpoint, `/` answers anonymously with
   2xx/3xx only once the application is fully up, and first boot (fixtures, `collectstatic`,
@@ -101,7 +115,8 @@ First-run only, idempotent, under `/app/data`, mode 0600, re-asserted on every b
 | Secret | Shape | Criticality | Notes |
 |---|---|---|---|
 | `SECRET_KEY` | Django secret key, random string | data-loss-critical | Rotation invalidates sessions and password reset tokens; does not orphan stored data. Never regenerated once seeded. |
-| JWT keypair | RS256 private/public key pair (JWK) | data-loss-critical | Used for the mobile JWT API and the PowerSync JWKS endpoint (unused while PowerSync is excluded). Rotation logs the mobile app out; does not orphan stored data. Never regenerated once seeded. |
+| JWT keypair | RS256 private/public key pair (JWK) | data-loss-critical | Used for the mobile JWT API and served as the JWKS that PowerSync validates every app token against. Rotation signs every mobile app out; does not orphan stored data. Never regenerated once seeded. |
+| `db-wger`, `db-powersync` | Hex passwords for the bundled database's two login roles | data-loss-critical | Roles are re-created from these on every boot and restore, never restored from the dump. Never regenerated once seeded. |
 | Admin password | Random string | seed-once | Set on first boot in place of upstream's insecure default, written to `/app/data/.secrets/admin-password` for the operator to read once. |
 
 Data-loss-critical secrets must be proven byte-identical, by sha256, across both an update and a
@@ -115,7 +130,8 @@ the start.sh phase is under way.
 
 | Application variable | Source or value | Notes |
 |---|---|---|
-| `DJANGO_DB_*` | `CLOUDRON_POSTGRESQL_*` | |
+| `DJANGO_DB_*` | bundled server: socket `/app/pgdata`, database and role `wger`, password `db-wger` | `CLOUDRON_POSTGRESQL_*` are read only by the one-time move |
+| `PS_DATABASE_URI`, `PS_STORAGE_PG_URI`, `PS_JWKS_URL`, `PS_PORT` | set in `powersync/run.sh` only | see the warning under State |
 | `DJANGO_CACHE_LOCATION` | `CLOUDRON_REDIS_URL`, db index 1 | |
 | Celery broker/backend | `CLOUDRON_REDIS_URL`, db index 2 | |
 | `EMAIL_*`, `FROM_EMAIL` | `CLOUDRON_MAIL_SMTP_*`, `CLOUDRON_MAIL_FROM` | `ENABLE_EMAIL=True` |
@@ -124,16 +140,21 @@ the start.sh phase is under way.
 
 ## Backup and restore
 
-PostgreSQL and Redis are Cloudron addons and are backed up by the platform independently of this
-package. `/app/data` (media, seeded secrets, the operator environment override file) is covered
-by the standard filesystem backup via the `localstorage` addon. No `persistentDirs`,
-`backupCommand` or `restoreCommand` are used: nothing this package writes outside `/app/data`
-needs to survive an update or restore, since static assets are rebuilt on every boot.
+`/app/pgdata` is a `persistentDirs` entry, so the live cluster is never file-copied. The
+`backupCommand` (`backup.sh`) writes `pg_dump -Fc` of `wger`, excluding the `powersync` schema,
+to `/app/data/db/wger.dump`; the `restoreCommand` (`restore.sh`) rebuilds from it and checks
+every table's row count against the dump. On an **in-place** restore Cloudron keeps the
+persistentDir, so `restore.sh` moves the live cluster aside to `/app/pgdata/pre-restore-<time>`
+first and puts it back if anything fails: this package's restores really restore, unlike the
+Windmill and Langfuse packages. Both hooks run with no `CLOUDRON_*` environment and discarded
+output; they log to `/app/data/db/{backup,restore}.log`. Redis state is disposable.
+**Open:** proving on a real box that Cloudron never calls `restoreCommand` on update or restart.
 
 ## Future compatibility
 
 The single bump point for a version upgrade is the upstream image digest (and the
 `upstreamVersion` manifest field, kept in step). Django migrations and the wger fixture bootstrap
 run automatically on boot against an existing database. Deliberately out of scope for this
-package version: PowerSync/mobile offline sync (see `docs/decisions/` for the stub ADR once
-written) and any SSO claim beyond what the allauth experiment proves.
+package version: any SSO claim beyond what the allauth experiment proves. At every upstream bump,
+re-vendor `powersync/` (see its `PROVENANCE.md`): the sync rules must match the server's
+`powersync` publication. PostgreSQL stays at 18 until a release ships `pg_upgrade`.

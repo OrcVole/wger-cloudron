@@ -26,13 +26,17 @@
 # TCP accept() on :8000 happens earlier than a strictly serial reading of phase-3 implies. This
 # is the single most consequential deviation from a literal reading of the spec in this package;
 # see start.sh's header comment for the same note from the other side.
-set -euo pipefail
+# -E so the ERR trap (fatal, below) also fires inside functions: without it a failure in a
+# function exits this script quietly, nginx keeps answering the health check, and gunicorn never
+# starts. Commands already guarded with `|| fatal` are unaffected.
+set -Eeuo pipefail
 
 log() { printf '==> [bootstrap] %s\n' "$*"; }
 
 MANAGE="/home/wger/src/manage.py"
-SECRETS_DIR="/app/data/.secrets"
 SUPERVISOR_CONF="/app/code/supervisor/supervisord.conf"
+# shellcheck source=postgres/pg.sh
+source /app/code/postgres/pg.sh
 
 # Fail LOUD: this script is the only thing standing between "container up" and "application
 # actually serving". If it fails and merely exits, nginx keeps answering /healthcheck 200 with
@@ -222,12 +226,140 @@ else:
     log "Cloudron OIDC SocialApp state: ${out:-unknown}"
 }
 
+# --- the bundled database (docs/decisions/0006) ------------------------------------------------
+
+# Written before bootstrap creates the bundled wger database, removed once the marker exists. Its
+# presence at boot means any wger database in the bundled cluster is our own unfinished attempt.
+IN_PROGRESS="${PGROOT}/.bundled-db-in-progress"
+ADDON_DUMP="${DB_DIR}/.addon-migration.dump"
+
+wait_for_postgres() {
+    local attempt
+    for attempt in $(seq 1 60); do
+        if pg_ready; then
+            log "bundled PostgreSQL is accepting connections"
+            return 0
+        fi
+        log "waiting for the bundled PostgreSQL (attempt ${attempt}/60)"
+        sleep 2
+    done
+    fatal "the bundled PostgreSQL did not accept connections after 120s"
+}
+
+# The addon, reached through the discrete CLOUDRON_POSTGRESQL_* variables (the ones 1.x used) as
+# libpq's own PG* environment: no URL to build or percent-encode, and nothing depends on
+# CLOUDRON_POSTGRESQL_URL being present.
+addon() {
+    PGHOST="${CLOUDRON_POSTGRESQL_HOST}" PGPORT="${CLOUDRON_POSTGRESQL_PORT}" \
+    PGUSER="${CLOUDRON_POSTGRESQL_USERNAME}" PGPASSWORD="${CLOUDRON_POSTGRESQL_PASSWORD}" \
+    PGDATABASE="${CLOUDRON_POSTGRESQL_DATABASE}" "$@"
+}
+
+addon_psql() {
+    addon "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 "$@"
+}
+
+addon_has_wger() {
+    local v
+    v="$(addon_psql -Atc "SELECT to_regclass('public.django_migrations') IS NOT NULL")" \
+        || fatal "could not query the postgresql addon"
+    [[ "${v}" == "t" ]]
+}
+
+# See ADR 0006, "Clearing the way". Called only when no marker exists.
+clear_bundled_database() {
+    database_exists "${PG_DB}" || return 0
+    drop_slots_for "${PG_DB}"
+    local has_tables
+    has_tables="$(psql_su -d "${PG_DB}" -Atc "SELECT to_regclass('public.django_migrations') IS NOT NULL")"
+    if [[ -e "${IN_PROGRESS}" || "${has_tables}" != "t" ]]; then
+        log "dropping an unfinished bundled database from an earlier attempt"
+        psql_su -d postgres -c "DROP DATABASE ${PG_DB}"
+        return 0
+    fi
+    local keep old
+    keep="${PG_DB}_orphaned_$(date -u +%Y%m%d%H%M%S)"
+    for old in $(psql_su -d postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE '${PG_DB}\_orphaned\_%'"); do
+        drop_slots_for "${old}"
+        psql_su -d postgres -c "DROP DATABASE \"${old}\""
+    done
+    log "WARNING: the bundled cluster holds a wger database with data but no marker says it is current"
+    log "WARNING: (usually: this app was rolled back to a pre-2.0.0 backup and then updated again)."
+    log "WARNING: keeping it as ${keep} and copying the current data from the addon instead"
+    psql_su -d postgres -c "ALTER DATABASE ${PG_DB} RENAME TO \"${keep}\""
+}
+
+migrate_from_addon() {
+    log "MOVING THE DATABASE: copying wger's data from the postgresql addon into the bundled server (one time)"
+    rm -f "${ADDON_DUMP}"
+    log "dumping the addon database"
+    run_interruptible addon "${PG_BIN}/pg_dump" --format=custom --no-owner --no-privileges \
+        --file="${ADDON_DUMP}"
+    log "dump written ($(du -h "${ADDON_DUMP}" | cut -f1)); loading it into the bundled server"
+    run_interruptible restore_dump_into_app_db "${ADDON_DUMP}"
+
+    log "verifying: exact row counts of every table, addon against bundled"
+    local want got
+    want="$(addon_psql -At -F '|' -c "${count_rows_sql}" | LC_ALL=C sort)" || fatal "could not count rows in the addon"
+    got="$(count_rows_bundled)" || fatal "could not count rows in the bundled database"
+    if [[ "${want}" != "${got}" ]]; then
+        diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}") | sed 's/^/==> [bootstrap]   /' >&2 || true
+        fatal "row counts differ between the addon and the bundled copy (above: < addon, > bundled). The addon is untouched and the move will be retried on the next start."
+    fi
+    local tables rows
+    tables="$(printf '%s\n' "${got}" | grep -c .)"
+    rows="$(printf '%s\n' "${got}" | awk -F'|' '{ s += $2 } END { print s + 0 }')"
+    write_marker addon "${tables}" "${rows}"
+    rm -f "${ADDON_DUMP}"
+    log "database moved and verified: ${tables} tables, ${rows} rows, all matching the addon. The addon copy is kept, unchanged, as the rollback copy."
+}
+
+# Decide where wger's data comes from on this boot (ADR 0006, the state table).
+prepare_database() {
+    ensure_roles || fatal "could not create or update the database roles"
+    if [[ -e "${MARKER}" ]]; then
+        database_exists "${PG_DB}" || fatal "${MARKER} says the bundled database is authoritative, but it has no ${PG_DB} database. Restore this app from a backup."
+        log "bundled database is authoritative ($(cat "${MARKER}"))"
+        return 0
+    fi
+    # The addon decides fresh-versus-move, so wait for it: a slow addon must not read as "empty".
+    wait_for_tcp "postgresql addon" "${CLOUDRON_POSTGRESQL_HOST}" "${CLOUDRON_POSTGRESQL_PORT}"
+    clear_bundled_database
+    touch "${IN_PROGRESS}"
+    create_app_database
+    if addon_has_wger; then
+        migrate_from_addon
+    else
+        log "fresh install: the addon holds no wger data, so the bundled database starts empty"
+        write_marker fresh 0 0
+    fi
+    rm -f "${IN_PROGRESS}"
+}
+
+# PowerSync's access, re-asserted every boot after migrations (new tables need the grant too;
+# the default-privileges rule covers tables created later by wger's own migrations).
+ensure_powersync_access() {
+    psql_su -d "${PG_DB}" -v sync_role="${PG_SYNC_ROLE}" -v app_role="${PG_APP_ROLE}" -v schema="${PG_SYNC_SCHEMA}" <<'SQL' \
+        || fatal "could not grant PowerSync its access"
+SELECT format('CREATE SCHEMA IF NOT EXISTS %I AUTHORIZATION %I', :'schema', :'sync_role') \gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'sync_role') \gexec
+SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'sync_role') \gexec
+SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA public TO %I', :'sync_role') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT ON TABLES TO %I', :'app_role', :'sync_role') \gexec
+SQL
+    local pub
+    pub="$(psql_su -d "${PG_DB}" -Atc "SELECT count(*) FROM pg_publication_tables WHERE pubname = 'powersync'")"
+    [[ "${pub}" -gt 0 ]] || fatal "the powersync publication is missing or empty after migrations (core migration 0027 should have created it)"
+    log "PowerSync access in place: schema ${PG_SYNC_SCHEMA}, read access to public, publication covers ${pub} tables"
+}
+
 # --- main ------------------------------------------------------------------------------------
 
 log "starting (nginx is already up and answering /healthcheck; gunicorn/celery are not started yet)"
 
-wait_for_tcp postgresql "${DJANGO_DB_HOST}" "${DJANGO_DB_PORT}"
+wait_for_postgres
 wait_for_tcp redis "${CLOUDRON_REDIS_HOST}" "${CLOUDRON_REDIS_PORT}"
+prepare_database
 
 log "probing database emptiness"
 FIRST_RUN=0
@@ -245,19 +377,10 @@ fi
 # explicitly (same commands, same fixture list and order as wger/tasks.py bootstrap), each one
 # idempotent, so any interruption at any point heals on the next boot.
 #
-# core.0023_create_publication runs CREATE PUBLICATION powersync FOR ALL TABLES, which
-# PostgreSQL allows only to superusers; the Cloudron postgresql addon user is not one, and the
-# migration killed the first install (psycopg.errors.InsufficientPrivilege, observed live
-# 2026-08-01). PowerSync is not part of this package (mobile offline sync is documented as
-# unavailable), so that one migration is FAKED: core is migrated for real up to 0022, 0023 is
-# then recorded as applied without running, and the full migrate afterwards continues normally
-# (core.0024 and later run for real). All three commands are idempotent no-ops once applied.
-# Revisit at every upstream version bump: a new superuser-requiring migration would fail the
-# update loudly, which is the intended fail-loud behaviour.
-log "applying core migrations to 0022, then faking the PowerSync publication migration (core.0023)"
-run_interruptible python3 "${MANAGE}" migrate --noinput core 0022
-run_interruptible python3 "${MANAGE}" migrate --noinput --fake core 0023
-
+# ADR 0005 faked core.0023 here because the addon role could not create a FOR ALL TABLES
+# publication. In wger 2.7 that migration is a no-op and 0027 creates the publication from an
+# explicit table list, which the owning role may do; existing installs already record 0023 as
+# applied. So migrations now run unmodified (docs/decisions/0006).
 log "running database migrations"
 run_interruptible python3 "${MANAGE}" migrate --noinput
 
@@ -281,7 +404,9 @@ manage set-site-url
 
 reconcile_oidc_socialapp
 
-log "starting gunicorn, celery-worker and celery-beat"
-supervisorctl -c "${SUPERVISOR_CONF}" start gunicorn celery-worker celery-beat
+ensure_powersync_access
+
+log "starting gunicorn, celery-worker, celery-beat, powersync and its daily compaction"
+supervisorctl -c "${SUPERVISOR_CONF}" start gunicorn celery-worker celery-beat powersync powersync-compact
 
 log "first-run/every-boot bootstrap sequence complete"

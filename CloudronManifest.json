@@ -5,7 +5,7 @@
   "packagerName": "OrcVole",
   "packagerUrl": "https://github.com/OrcVole/wger-cloudron",
   "contactEmail": "Most+github@OrcadianVole.com",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "upstreamVersion": "2.7",
   "manifestVersion": 2,
   "minBoxVersion": "9.1.0",
@@ -20,7 +20,12 @@
   "httpPort": 8000,
   "healthCheckPath": "/healthcheck",
   "configurePath": "/",
-  "memoryLimit": 2147483648,
+  "memoryLimit": 3221225472,
+  "persistentDirs": [
+    "/app/pgdata"
+  ],
+  "backupCommand": "/app/code/backup.sh",
+  "restoreCommand": "/app/code/restore.sh",
   "addons": {
     "localstorage": {},
     "postgresql": {},
