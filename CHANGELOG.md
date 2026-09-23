@@ -25,7 +25,7 @@
 - Measurement categories now support health sync.
 - Timezone-aware streaks and trophies.
 
-## [1.0.0]
+[1.0.0]
 
 - Initial package, wrapping wger 2.6.
 - Cloudron single sign-on through the oidc addon: the login page offers sign-in with the
