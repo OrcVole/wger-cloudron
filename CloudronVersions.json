@@ -98,6 +98,60 @@
             "creationDate": "Tue, 15 Sep 2026 09:53:43 GMT",
             "ts": 1789466023000,
             "publishState": "published"
+        },
+        "2.0.0": {
+            "manifest": {
+                "id": "io.github.orcvole.wger",
+                "title": "wger",
+                "author": "OrcVole",
+                "packagerName": "OrcVole",
+                "packagerUrl": "https://github.com/OrcVole/wger-cloudron",
+                "contactEmail": "Most+github@OrcadianVole.com",
+                "version": "2.0.0",
+                "upstreamVersion": "2.7",
+                "manifestVersion": 2,
+                "minBoxVersion": "9.1.0",
+                "website": "https://wger.de",
+                "dockerImage": "ghcr.io/orcvole/wger-cloudron@sha256:e3facffc04cfc1d33b3a86864d5baac4fb407fea0f349fa879f66aaa049f819b",
+                "tagline": "Workout, fitness and nutrition manager",
+                "description": "<upstream>2.7</upstream>\n\n# wger\n\nwger (pronounced \"ˈvɛɡɐ\") is a free, open source workout, fitness and nutrition manager. It\ncovers the whole training loop: build routines, log workouts, track body weight and\nmeasurements, and plan meals against a searchable ingredient and nutrition database that\nincludes barcode scanning. A gym management mode lets a trainer administer members, assign\nroutines and record progress on their behalf.\n\nThe official wger mobile apps (Android and iOS) work with this package, including Android\nwithout Google services, such as LineageOS or GrapheneOS, using the app from F-Droid. The apps\nsync through PowerSync, which the package includes and serves on the app's own address, so a\nphone needs only the server address. A REST API ships alongside the web application.\n\nThis package runs wger's own gunicorn application server together with its Celery worker and\nbeat scheduler under supervisor, fronted by nginx. Its database is a PostgreSQL server inside the\napp, because the mobile apps' sync needs a database feature (logical replication) that the\nCloudron PostgreSQL addon does not offer. Backups carry a consistent copy of that database, and\nrestoring a backup returns it to the backup's contents. It uses the Cloudron Redis addon for its\ncache and queue, and the Cloudron email addon to relay outgoing mail (password resets,\nnotifications). Uploaded media (exercise images, custom photos) is stored in the app's persistent\ndata directory, not in the container image.\n\nwger's exercise database can synchronise weekly from the public wger.de instance to pick up new\nexercises, images and translations; this is on by default and configurable. Ingredient\nsynchronisation against wger.de is off by default, because the ingredient dataset is large and\ngrows the database considerably; it can be turned on if wanted.\n\nPowerSync is licensed under the Functional Source License (FSL-1.1-ALv2), which becomes Apache\n2.0 two years after each release; wger itself is AGPL-3.0.\n",
+                "changelog": "- The wger mobile apps (Android and iOS, app version 2.0 and later) now work with this package. They need a sync service called PowerSync, which the package now includes and serves at `/ps/` on the app's own address. Nothing needs configuring on the phone beyond the server address.\n- This includes Android without Google services (for example LineageOS or GrapheneOS), using the app from F-Droid.\n- **The database moves into the app.** PowerSync needs logical replication, which the Cloudron PostgreSQL addon does not offer, so the package now runs its own PostgreSQL 18.\n- The first start after this update copies all data from the addon database into the app's own database and checks that every table has the same number of rows before the app starts. **This first start takes longer than usual**, in proportion to the amount of data. If the check fails, the app stops with a clear error and the addon database is left untouched.\n- The addon database is kept, unchanged, as a rollback copy. It is no longer used or updated, and a later version will remove it.\n- To go back to 1.1.0, restore the backup taken before this update.\n- Backups now contain a consistent dump of the app's database. Restoring a backup, including an in-place restore, returns the database to the backup's contents. The database it replaces is kept aside inside the app until the next restore.\n- After a restore, the mobile apps download their data from the server again automatically.\n- Memory limit raised from 2 GB to 3 GB for PostgreSQL and PowerSync.\n- PowerSync 1.26.1 is included under the Functional Source License (FSL-1.1-ALv2, which becomes Apache 2.0 after two years); its licence text ships with the package.\n- The workaround that skipped one upstream database migration is no longer needed and has been removed.\n- Correction to 1.1.0: that version did not support the mobile apps, and its changelog should have said so.\n",
+                "icon": "file://logo.png",
+                "iconUrl": "https://raw.githubusercontent.com/OrcVole/wger-cloudron/main/logo.png",
+                "postInstallMessage": "<sso>\n\n## Single sign-on\n\nThis app is connected to Cloudron user management. Anyone granted access to the app can use\nthe \"Sign in with ...\" button on the login page (it carries this Cloudron's configured name);\na wger account is created automatically on first sign-in. The administrator account below is\napp-local and continues to work alongside single sign-on.\n\n</sso>\n\n## First login\n\nThe initial administrator account is:\n\n- Username: `admin`\n- Password: randomly generated at first start and written to\n  `/app/data/.secrets/admin-password`\n\nRead the password using the Cloudron file manager, or open the web terminal for this app and\nrun:\n\n```bash\ncat /app/data/.secrets/admin-password\n```\n\nChange the administrator password after first login.\n\n## Mobile apps\n\nThe official wger apps (Android and iOS, including the F-Droid build for phones without Google\nservices) connect with just this app's address. They sync through PowerSync, which runs inside\nthis app; there is nothing to set up. Rotating the JWT keys in `/app/data/.secrets` signs every\nphone out.\n\n## Database and backups\n\nwger's database runs inside this app rather than in the Cloudron PostgreSQL addon, because the\nmobile sync needs a feature the addon does not offer. Each backup includes a consistent copy of\nit, and restoring a backup (in place or as a clone) returns the database to that backup. An\ninstall updated from a 1.x version was copied out of the addon automatically on its first start;\nthe addon copy is kept unchanged as a rollback copy and is no longer used.\n\n## Registration\n\nSelf-registration of new accounts is disabled by default. To enable it, add an override to the\nenvironment file at `/app/data/env` (see the package README for the full list of supported\noverrides), then restart the app.\n\n## Support\n\nThis package is not affiliated with the wger project. Report packaging issues at the package's\nGitHub repository, and upstream application issues at the wger project itself.\n",
+                "httpPort": 8000,
+                "healthCheckPath": "/healthcheck",
+                "configurePath": "/",
+                "memoryLimit": 3221225472,
+                "persistentDirs": [
+                    "/app/pgdata"
+                ],
+                "backupCommand": "/app/code/backup.sh",
+                "restoreCommand": "/app/code/restore.sh",
+                "addons": {
+                    "localstorage": {},
+                    "postgresql": {},
+                    "redis": {},
+                    "sendmail": {},
+                    "oidc": {
+                        "loginRedirectUri": "/account/oidc/cloudron/login/callback/"
+                    }
+                },
+                "optionalSso": true,
+                "tags": [
+                    "fitness",
+                    "workout",
+                    "nutrition",
+                    "health",
+                    "gym"
+                ],
+                "mediaLinks": [
+                    "https://raw.githubusercontent.com/OrcVole/wger-cloudron/main/screenshots/wger-features.png"
+                ]
+            },
+            "creationDate": "Wed, 23 Sep 2026 11:15:47 GMT",
+            "ts": 1790162147000,
+            "publishState": "published"
         }
     }
 }
