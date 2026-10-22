@@ -29,6 +29,9 @@ FROM docker.io/journeyapps/powersync-service@sha256:413a0c813e96935ebe7203b5759f
 # Stage 2b: uv, pinned by digest, used only to install the interpreter below (not shipped).
 FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
+# Stage 2c: official Node.js 24.22.1 (security release 2026-10-20), glibc build; replaces PowerSync's 24.18.1.
+FROM docker.io/library/node:24.22.1-bookworm-slim@sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae AS officialnode
+
 # Stage 3: the Cloudron base image. This is the ONLY stage that ships; it must stay
 # cloudron/base so platform tooling (file manager, web terminal, log viewer) keeps working.
 FROM docker.io/cloudron/base:6.0.1@sha256:7b1e729960c3ca312d26e886917ba89483241bba0219ff292858e10d9d5768ee
@@ -84,6 +87,9 @@ RUN set -eux; \
 # PowerSync's own Node runtime and service tree, unmodified, plus its licence (FSL-1.1-ALv2).
 COPY --from=powersync /usr/local/bin/node /opt/powersync/bin/node
 COPY --from=powersync /app /opt/powersync/app
+# Node.js security release (CVE-2026-111497 Brotli RCE, TLS hostname bypasses, CA store): upstream's node
+# is 24.18.1, so the official 24.22.1 binary replaces it (gated in the RUN below).
+COPY --from=officialnode /usr/local/bin/node /opt/powersync/bin/node
 COPY LICENSE.powersync /opt/powersync/LICENSE
 
 # Image environment mirrors upstream's own (verified in phase-notes/phase-2.md): PYTHONPATH
@@ -160,6 +166,7 @@ RUN set -eux; \
         /app/code/powersync/powersync.yaml /app/code/powersync/sync_rules.yaml; \
     mkdir -p /app/pgdata; \
     chown cloudron:cloudron /app/pgdata; \
+    [ "$(/opt/powersync/bin/node --version)" = "v24.22.1" ] || { echo "FATAL: PowerSync node is not v24.22.1"; exit 1; }; \
     /opt/powersync/bin/node --version; \
     /opt/powersync/bin/node /opt/powersync/app/service/lib/entry.js --help > /dev/null
 

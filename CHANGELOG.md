@@ -1,5 +1,9 @@
 # Changelog
 
+[2.1.1]
+
+- Node.js 24.18.1 to 24.22.1 (security release: CVE-2026-111497 Brotli remote code execution, TLS hostname-verification bypasses, updated CA store)
+
 [2.1.0]
 
 - Base image cloudron/base 5.0.0 to 6.0.1 (Ubuntu 26.04): the operating system moves to Ubuntu 26.04, with current security updates including the removal of the compromised eMudhra emSign ECC Root CA - G3 from the trusted certificates.

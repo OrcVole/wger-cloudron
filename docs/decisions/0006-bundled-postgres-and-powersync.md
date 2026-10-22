@@ -142,7 +142,7 @@ applied.
 
 - **Pinned by digest:** `journeyapps/powersync-service:1.26.1`
   (`sha256:413a0c813e96935ebe7203b5759f8a594a7b7cd8aa42134713e63af637e0f079`). Upstream wger's own
-  compose file runs `:latest`. Its Node 24.18.1 binary and `/app` tree are copied to
+  compose file runs `:latest`. Its Node 24.18.1 binary (replaced from 2.1.1 by the official 24.22.1) and `/app` tree are copied to
   `/opt/powersync`. Tested on Ubuntu 24.04: it starts, and its one native add-on (snappy) loads.
 - **Config:** upstream's `powersync.yaml` and `sync_rules.yaml`, vendored unchanged in `powersync/`
   with a provenance note. Environment: `PS_DATABASE_URI` and `PS_STORAGE_PG_URI` (the `powersync`
