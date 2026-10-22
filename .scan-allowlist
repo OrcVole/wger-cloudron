@@ -5,3 +5,11 @@
 # so the denylist matching it is correct behaviour and allowlisting it is the honest response.
 # Before 2026-08-09 meilisearch alone handled this, with bespoke code; now it is the shared mechanism.
 Most+github@OrcadianVole.com
+
+# Upstream's own public static assets and translations, which happen to contain the identity word the
+# denylist hunts for (Batch 8, 2026-10-22): Font Awesome names one of its icons after it, so the
+# entries below match only lines under its metadata directories, not the word anywhere else.
+fontawesomefree/metadata/
+fontawesome-free/metadata/
+# One line of wger's Dutch translation (locale/nl/LC_MESSAGES/django.po), upstream text:
+automatisch gebruikt worden. Anders zal het gewicht dat je hier invult
