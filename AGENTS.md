@@ -92,7 +92,7 @@ backup, in-place restore, a deliberately failed restore, clone) before any gate.
 
 ## Pinned upstream
 
-- `cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c`
+- `docker.io/cloudron/base:6.0.1@sha256:7b1e729960c3ca312d26e886917ba89483241bba0219ff292858e10d9d5768ee` (Ubuntu 26.04, glibc 2.43)
 - wger `2.6` (tagged 2026-06-17), image `docker.io/wger/server`, digest resolved and pinned at
   build time (tags float), AGPL-3.0.
 - Each bundled service, with its digest and the reason for that exact version: recorded in

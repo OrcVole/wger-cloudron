@@ -1,5 +1,12 @@
 # Changelog
 
+[2.1.0]
+
+- Base image cloudron/base 5.0.0 to 6.0.1 (Ubuntu 26.04): the operating system moves to Ubuntu 26.04, with current security updates including the removal of the compromised eMudhra emSign ECC Root CA - G3 from the trusted certificates.
+- Python: the base no longer carries Python 3.12, so wger runs on a pinned uv-managed CPython 3.12.15 installed with the app (the same minor as before; upstream's packages are unchanged). Its bundled pip is 26.2.2 or later.
+- The bundled PostgreSQL stays at major 18 (18.6, from the PostgreSQL project's repository for Ubuntu 26.04), so no data migration is involved. wger 2.7 and PowerSync 1.26.1 are unchanged.
+- The first start after updating rebuilds text indexes for the new operating system's sorting rules; this can take a while on a large install.
+
 [2.0.0]
 
 - The wger mobile apps (Android and iOS, app version 2.0 and later) now work with this package. They need a sync service called PowerSync, which the package now includes and serves at `/ps/` on the app's own address. Nothing needs configuring on the phone beyond the server address.

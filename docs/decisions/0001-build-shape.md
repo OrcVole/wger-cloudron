@@ -22,7 +22,7 @@ has never tested.
 
 Multi-stage Dockerfile. Stage one is `docker.io/wger/server` pinned by the digest resolved from
 the 2.6 tag at packaging time (recorded in the Dockerfile beside the ARG). The final stage is
-`cloudron/base:5.0.0` at the doctrine-pinned digest, copying `/home/wger/.local` and
+`cloudron/base:5.0.0` (since 2.1.0: 6.0.1, see the Dockerfile) at the doctrine-pinned digest, copying `/home/wger/.local` and
 `/home/wger/src` unchanged, at the same paths. The interpreter minors match exactly, the uid
 matches, and glibc forward compatibility is not even needed. The base already provides libpq5,
 the en_US.utf8 locale, gettext, tini and gosu (verified locally), so the runtime stage installs

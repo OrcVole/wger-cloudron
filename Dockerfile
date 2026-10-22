@@ -3,8 +3,9 @@
 # Build shape per docs/decisions/0001-build-shape.md: copy the upstream wger 2.7 image's
 # installed python tree and source tree, unchanged, onto the Cloudron base image. Both images
 # are Ubuntu 24.04 with Python 3.12.3 and a uid/gid-1000 application user, so the copy needs no
-# recompilation and no apt packages in the final stage (verified locally, see phase-notes and
-# docs/PACKAGING-NOTES.md).
+# recompilation (verified locally, see phase-notes and docs/PACKAGING-NOTES.md). On cloudron/base 6
+# (Ubuntu 26.04, Python 3.14) the copied tree is still cp312, so a pinned uv-managed CPython 3.12
+# is installed and put first on PATH as python3 (see the interpreter step below).
 
 # ---------------------------------------------------------------------------------------------
 # ARG WGER_VERSION documents which upstream release this digest was resolved from. The build is
@@ -21,13 +22,16 @@ FROM docker.io/wger/server@sha256:1c5789b93bfe5eed0b7287255782d9177027b255de2b22
 
 # Stage 2: PowerSync, the mobile apps' sync service (docs/decisions/0006). Pinned by digest; upstream
 # wger's own compose runs `:latest`. Only its Node binary and its /app tree are copied below; both were
-# tested on Ubuntu 24.04 (the base's glibc 2.39 is older than this Debian 13 image's 2.41, and the
+# tested on Ubuntu 24.04 (the old base's glibc 2.39 was older than this Debian 13 image's 2.41; base 6 has 2.43, and the
 # portable Node build and the one native add-on, snappy, both load).
 FROM docker.io/journeyapps/powersync-service@sha256:413a0c813e96935ebe7203b5759f8a594a7b7cd8aa42134713e63af637e0f079 AS powersync
 
+# Stage 2b: uv, pinned by digest, used only to install the interpreter below (not shipped).
+FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
+
 # Stage 3: the Cloudron base image. This is the ONLY stage that ships; it must stay
 # cloudron/base so platform tooling (file manager, web terminal, log viewer) keeps working.
-FROM cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c
+FROM docker.io/cloudron/base:6.0.1@sha256:7b1e729960c3ca312d26e886917ba89483241bba0219ff292858e10d9d5768ee
 
 ARG WGER_VERSION
 LABEL org.opencontainers.image.version="${WGER_VERSION}" \
@@ -39,15 +43,37 @@ LABEL org.opencontainers.image.version="${WGER_VERSION}" \
 COPY --from=upstream /home/wger/.local /home/wger/.local
 COPY --from=upstream /home/wger/src /home/wger/src
 
-# PostgreSQL 18 from the PostgreSQL project's own apt repository (PGDG), because Ubuntu 24.04 stops at
-# 16 and the one-time move off the addon must dump an older-or-equal server into a newer one, never
+# The interpreter. The copied /home/wger/.local tree is built for CPython 3.12 (cp312 wheels, 3.12 site-packages
+# path) but cloudron/base 6 carries Python 3.14 and no venv or pip. A pinned uv-managed CPython 3.12.15 is
+# installed under /app/code/python (the same method as docling-serve and vllm), and symlinked first on PATH
+# as python3 and python3.12 so every bare `python3` call in start.sh, bootstrap.sh, pg.sh and the supervisor
+# programs gets 3.12. The console scripts copied from upstream carry a `#!/usr/bin/python3` shebang, which on
+# this base would be Python 3.14, so they are rewritten to the managed interpreter. Its bundled pip is raised
+# to 26.2.2 or later (Cloudron security advisory of 2026-10-21); the build fails if it is older.
+ENV UV_PYTHON_INSTALL_DIR=/app/code/python \
+    UV_PYTHON_PREFERENCE=only-managed
+RUN --mount=type=bind,from=uv,source=/uv,target=/usr/local/bin/uv \
+    set -eux; \
+    uv python install 3.12.15; \
+    PY="$(uv python find 3.12.15)"; \
+    "${PY}" -m pip install --no-cache-dir --break-system-packages 'pip>=26.2.2'; \
+    "${PY}" -c "import pip; from importlib.metadata import version; v=tuple(int(x) for x in version('pip').split('.')[:3]); assert v>=(26,2,2), v; print('pip', version('pip'))"; \
+    ln -s "${PY}" /usr/local/bin/python3; \
+    ln -s "${PY}" /usr/local/bin/python3.12; \
+    find /home/wger/.local/bin -type f -exec sed -i '1s|^#!/usr/bin/python3$|#!/usr/local/bin/python3|' {} +; \
+    chown -R 1000:1000 /home/wger/.local/bin; \
+    python3 -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version; print(sys.version)"; \
+    ! grep -rl '^#!/usr/bin/python3' /home/wger/.local/bin
+
+# PostgreSQL 18 from the PostgreSQL project's own apt repository (PGDG), because Ubuntu's own archive carries
+# only one major (18 on 26.04, with no way to keep a major fixed) and the one-time move off the addon must dump an older-or-equal server into a newer one, never
 # the reverse (docs/decisions/0006). postgresql-common would create a "main" cluster under /var/lib at
 # install time; the package's cluster lives in the /app/pgdata persistentDir instead, so that
 # default cluster is removed in the same layer.
 RUN set -eux; \
     install -d /usr/share/postgresql-common/pgdg; \
     curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
-    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt resolute-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql-18 postgresql-client-18; \
     rm -rf /var/lib/postgresql/18/main /etc/postgresql/18/main; \

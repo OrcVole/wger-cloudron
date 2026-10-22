@@ -336,6 +336,28 @@ prepare_database() {
     rm -f "${IN_PROGRESS}"
 }
 
+# The bundled cluster outlives the image: after an update that moves the base image to a newer
+# glibc, every database was created under the old sorting rules and PostgreSQL warns "collation
+# version mismatch". Text indexes may then be corrupt, so rebuild them and record the new version.
+# Idempotent: with no mismatch it does nothing. Runs before migrations and before anything that
+# uses the database (gunicorn, celery, PowerSync are not started yet), so the locks cost nothing.
+reindex_for_collation_changes() {
+    local db mismatched
+    mismatched="$(psql_su -d postgres -Atc "SELECT datname FROM pg_database WHERE datallowconn AND datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid) ORDER BY datname")" \
+        || fatal "could not check the databases for a collation version mismatch"
+    if [[ -z "${mismatched}" ]]; then
+        log "collation versions match the operating system: nothing to reindex"
+        return 0
+    fi
+    while read -r db; do
+        [[ -n "${db}" ]] || continue
+        log "database ${db}: collation version differs from the operating system's; rebuilding its indexes (this can take a while)"
+        psql_su -d "${db}" -c "REINDEX DATABASE \"${db}\"" || fatal "REINDEX DATABASE ${db} failed"
+        psql_su -d "${db}" -c "ALTER DATABASE \"${db}\" REFRESH COLLATION VERSION" || fatal "could not refresh the collation version of ${db}"
+        log "database ${db}: indexes rebuilt and collation version refreshed"
+    done <<< "${mismatched}"
+}
+
 # PowerSync's access, re-asserted every boot after migrations (new tables need the grant too;
 # the default-privileges rule covers tables created later by wger's own migrations).
 ensure_powersync_access() {
@@ -360,6 +382,7 @@ log "starting (nginx is already up and answering /healthcheck; gunicorn/celery a
 wait_for_postgres
 wait_for_tcp redis "${CLOUDRON_REDIS_HOST}" "${CLOUDRON_REDIS_PORT}"
 prepare_database
+reindex_for_collation_changes
 
 log "probing database emptiness"
 FIRST_RUN=0
